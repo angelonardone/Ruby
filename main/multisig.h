@@ -12,30 +12,22 @@
 // The maximum number of concurrent multisig registrations supported
 #define MAX_MULTISIG_REGISTRATIONS 16
 
-// The expected size of a liquid master blinding key
-#define MULTISIG_MASTER_BLINDING_KEY_SIZE (HMAC_SHA512_LEN / 2)
-
-// Check the master blinding key is either null and zero length, or non-null and the expected length
-#define IS_VALID_BLINDING_KEY(master_blinding_key, master_blinding_key_len)                                            \
-    ((!master_blinding_key && !master_blinding_key_len)                                                                \
-        || (master_blinding_key && master_blinding_key_len == MULTISIG_MASTER_BLINDING_KEY_SIZE))
-
 // The size of the byte-string required to store a multisig registration of the current 'version'
-#define MULTISIG_BYTES_LEN(master_blinding_key_len, num_signers, total_num_path_elements)                              \
-    ((6 * sizeof(uint8_t)) + master_blinding_key_len + (num_signers * (6 + BIP32_SERIALIZED_LEN))                      \
-        + (total_num_path_elements * sizeof(uint32_t)) + HMAC_SHA256_LEN)
+// NOTE: the record keeps a (now always zero) 'blinding key length' byte, from the Liquid support of upstream Jade.
+#define MULTISIG_BYTES_LEN(num_signers, total_num_path_elements)                                                       \
+    ((6 * sizeof(uint8_t)) + (num_signers * (6 + BIP32_SERIALIZED_LEN)) + (total_num_path_elements * sizeof(uint32_t)) \
+        + HMAC_SHA256_LEN)
 
 // The largest supported multisig record
 // NOTE: beware of a later 'version' reducing this size as we may end up with larger records persisted in storage
 #define MAX_MULTISIG_BYTES_LEN                                                                                         \
-    (MULTISIG_BYTES_LEN(MULTISIG_MASTER_BLINDING_KEY_SIZE, MAX_ALLOWED_SIGNERS, MAX_ALLOWED_SIGNERS * 2 * MAX_PATH_LEN))
+    (MULTISIG_BYTES_LEN(MAX_ALLOWED_SIGNERS, MAX_ALLOWED_SIGNERS * 2 * MAX_PATH_LEN))
 
 // Multisig registration file, field names
 #define MSIG_FILE_NAME "Name"
 #define MSIG_FILE_FORMAT "Format"
 #define MSIG_FILE_SORTED "Sorted"
 #define MSIG_FILE_POLICY "Policy"
-#define MSIG_FILE_BLINDING_KEY "BlindingKey"
 #define MSIG_FILE_DERIVATION "Derivation"
 
 #define MULTISIG_FILE_MAX_LEN(num_signers)                                                                             \
@@ -47,14 +39,12 @@ typedef struct _multisig_data {
     bool sorted;
     uint8_t threshold;
     uint8_t num_xpubs;
-    uint8_t master_blinding_key_len;
-    uint8_t master_blinding_key[MULTISIG_MASTER_BLINDING_KEY_SIZE];
     uint8_t xpubs[MAX_ALLOWED_SIGNERS * BIP32_SERIALIZED_LEN];
 } multisig_data_t;
 
 WARN_UNUSED_RESULT bool multisig_data_to_bytes(script_variant_t variant, bool sorted, uint32_t threshold,
-    const uint8_t* master_blinding_key, size_t master_blinding_key_len, const signer_t* signers, size_t num_signers,
-    size_t total_num_path_elements, uint8_t* output_bytes, size_t output_len);
+    const signer_t* signers, size_t num_signers, size_t total_num_path_elements, uint8_t* output_bytes,
+    size_t output_len);
 
 WARN_UNUSED_RESULT bool multisig_data_from_bytes(const uint8_t* bytes, size_t bytes_len, multisig_data_t* output,
     signer_t* signer_details, size_t signer_details_len, size_t* written);
@@ -67,9 +57,6 @@ WARN_UNUSED_RESULT bool multisig_validate_paths(bool is_change, CborValue* all_s
 
 WARN_UNUSED_RESULT bool multisig_get_pubkeys(const uint8_t* xpubs, size_t num_xpubs, CborValue* all_signer_paths,
     uint8_t* pubkeys, size_t pubkeys_len, size_t* written);
-
-WARN_UNUSED_RESULT bool multisig_get_master_blinding_key(const multisig_data_t* multisig_data,
-    uint8_t* master_blinding_key, size_t master_blinding_key_len, const char** errmsg);
 
 void multisig_get_valid_record_names(
     const size_t* script_type, char names[][MAX_MULTISIG_NAME_SIZE], size_t num_names, size_t* num_written);

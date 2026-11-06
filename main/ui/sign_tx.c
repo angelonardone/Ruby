@@ -1,10 +1,7 @@
 #ifndef AMALGAMATED_BUILD
-#include <assets_snapshot.h>
 #include <inttypes.h>
-#include <wally_elements.h>
 #include <wally_transaction.h>
 
-#include "../assets.h"
 #include "../button_events.h"
 #include "../jade_assert.h"
 #include "../jade_wally_verify.h"
@@ -19,29 +16,12 @@
 gui_activity_t* make_display_address_activities(const char* title, bool show_one_screen_tick, const char* address,
     bool default_selection, gui_activity_t** actaddr2);
 
-// A warning to display if the asset registry data is missing
-static const char MISSING_ASSET_DATA[] = "Amounts may be shown in the wrong units.      Continue at your own   risk.";
-
-// A warning to display if the unblinding data is missing
-static const char BLINDED_OUTPUT[] = "Cannot unblind output";
-
 // Note shown to highlight outputs to self (script/address verified)
 static const char VERIFIED_WALLET_OUTPUT_MSG[] = "Verified wallet output";
 
 static const char TICKER_BTC[] = "BTC";
 
-static const uint32_t POW_10[9] = { 1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000 };
-
-static uint32_t get_asset_scale_factor(const asset_info_t* asset_info)
-{
-    // Sanity check to ensure the scale factor array is large enough to hold all possible precisions
-    JADE_STATIC_ASSERT(sizeof(POW_10) / sizeof(POW_10[0]) == ASSET_PRECISION_MAX + 1);
-    JADE_ASSERT(asset_info && asset_info->precision < sizeof(POW_10) / sizeof(POW_10[0]));
-    return POW_10[asset_info->precision];
-}
-
 // Don't display pre-validated (eg. change) outputs (if provided) unless they have an associated warning message.
-// Should work for elements and standard btc, but liquid hides scriptless outputs (fees)
 static bool display_output(
     const struct wally_tx_output* outputs, const output_info_t* output_info, const size_t i, const bool show_scriptless)
 {
@@ -85,139 +65,18 @@ static uint32_t displayable_outputs(
     return nDisplayable > 0 ? nDisplayable : (uint32_t)tx->num_outputs;
 }
 
-// Lookup the passed asset-id in the asset data, and return the asset-id, issuer,
-// ticker, and the passed value scaled correctly for the precision provided.
-static bool get_asset_display_info(const network_t network_id, const asset_info_t* assets, const size_t num_assets,
-    const uint8_t* asset_id, const size_t asset_id_len, const uint64_t value, char* issuer, const size_t issuer_len,
-    char* asset_id_hex, const size_t asset_id_hex_len, char* amount, const size_t amount_len, char* ticker,
-    const size_t ticker_len)
-{
-    JADE_ASSERT(network_is_liquid(network_id));
-    JADE_ASSERT(assets || !num_assets);
-    JADE_ASSERT(asset_id);
-    JADE_ASSERT(asset_id_len);
-    JADE_ASSERT(issuer);
-    JADE_ASSERT(issuer_len);
-    JADE_ASSERT(asset_id_hex);
-    JADE_ASSERT(asset_id_hex_len);
-    JADE_ASSERT(amount);
-    JADE_ASSERT(amount_len);
-    JADE_ASSERT(ticker);
-    JADE_ASSERT(ticker_len);
-
-    // Get the asset-id display hex string
-    char* idhex = NULL;
-    JADE_WALLY_VERIFY(wally_hex_from_bytes(asset_id, asset_id_len, &idhex));
-    JADE_ASSERT(idhex);
-    int ret = snprintf(asset_id_hex, asset_id_hex_len, "%s", idhex);
-    JADE_ASSERT(ret > 0 && ret < asset_id_hex_len);
-    JADE_WALLY_VERIFY(wally_free_string(idhex));
-
-    // Look up the asset-id in the canned asset-data
-    asset_info_t asset_info = {};
-    const bool have_asset_info = assets_get_info(network_id, assets, num_assets, asset_id_hex, &asset_info);
-    if (have_asset_info) {
-        JADE_LOGI("Found asset data for asset-id: '%s'", asset_id_hex);
-
-        // Issuer - truncate if overlong
-        ret = snprintf(issuer, issuer_len, "%.*s", asset_info.issuer_domain_len, asset_info.issuer_domain);
-        JADE_ASSERT(ret > 0);
-        if (ret >= issuer_len) {
-            issuer[issuer_len - 4] = '.';
-            issuer[issuer_len - 3] = '.';
-            issuer[issuer_len - 2] = '.';
-            issuer[issuer_len - 1] = '\0';
-        }
-
-        // Amount scaled and displayed at relevant precision
-        const uint32_t scale_factor = get_asset_scale_factor(&asset_info);
-        ret = snprintf(amount, amount_len, "%.*f", asset_info.precision, 1.0 * value / scale_factor);
-        JADE_ASSERT(ret > 0 && ret < amount_len);
-
-        // Ticker
-        ret = snprintf(ticker, ticker_len, "%.*s", (int)asset_info.ticker_len, asset_info.ticker);
-        JADE_ASSERT(ret > 0 && ret < ticker_len);
-    } else {
-        JADE_LOGW("Asset data for asset-id: '%s' not found!", asset_id_hex);
-
-        // Issuer unknown
-        ret = snprintf(issuer, issuer_len, "%s", make_empty_none(NULL));
-        JADE_ASSERT(ret > 0 && ret < issuer_len);
-
-        // sats precision
-        ret = snprintf(amount, amount_len, "%.00f", 1.0 * value);
-        JADE_ASSERT(ret > 0 && ret < amount_len);
-
-        // No ticker
-        ret = snprintf(ticker, ticker_len, "%s", make_empty_none(NULL));
-        JADE_ASSERT(ret > 0 && ret < ticker_len);
-    }
-
-    return have_asset_info;
-}
-
-static gui_activity_t* make_display_assetinfo_activities(
-    const char* ticker, const char* issuer, const char* asset_id_hex, gui_activity_t** assetinfo2)
-{
-    JADE_ASSERT(ticker);
-    JADE_ASSERT(issuer);
-    JADE_ASSERT(asset_id_hex);
-    JADE_INIT_OUT_PPTR(assetinfo2);
-
-    // Need two screens to show asset info
-    char buf[128];
-    const char* message[] = { buf };
-
-    // First screen, ticker and issuer
-    btn_data_t hdrbtns1[] = { { .txt = "=", .font = JADE_SYMBOLS_16x16_FONT, .ev_id = BTN_SIGNTX_ASSETINFO_DONE },
-        { .txt = ">", .font = JADE_SYMBOLS_16x16_FONT, .ev_id = BTN_SIGNTX_ASSETINFO_NEXT } };
-
-    int ret = snprintf(buf, sizeof(buf), "\n%s\n%s", ticker, issuer);
-    JADE_ASSERT(ret > 0);
-    if (ret > sizeof(buf)) {
-        buf[sizeof(buf) - 4] = '.';
-        buf[sizeof(buf) - 3] = '.';
-        buf[sizeof(buf) - 2] = '.';
-        buf[sizeof(buf) - 1] = '\0';
-    }
-
-    gui_activity_t* const act = make_show_message_activity(message, 1, "Asset Info", hdrbtns1, 2, NULL, 0);
-
-    gui_set_activity_initial_selection(hdrbtns1[1].btn);
-
-    // Second screen, asset id hex
-    ret = snprintf(buf, sizeof(buf), "\n%s", asset_id_hex);
-    JADE_ASSERT(ret > 0 && ret < sizeof(buf));
-
-    btn_data_t hdrbtns2[] = { { .txt = "=", .font = JADE_SYMBOLS_16x16_FONT, .ev_id = BTN_SIGNTX_ASSETINFO_NEXT },
-        { .txt = "S", .font = VARIOUS_SYMBOLS_FONT, .ev_id = BTN_SIGNTX_ASSETINFO_DONE } };
-
-    *assetinfo2 = make_show_message_activity(message, 1, "Asset Id", hdrbtns2, 2, NULL, 0);
-
-    gui_set_activity_initial_selection(hdrbtns2[1].btn);
-
-    return act;
-}
-
 static gui_activity_t* make_input_output_activities(const char* title, const bool is_wallet_output,
-    const bool is_address, const char* address_label, const char* amount, const char* ticker, const char* issuer,
-    const char* asset_id_hex, const char* warning_msg, gui_activity_t** acttickeramt, gui_activity_t** actaddr1,
-    gui_activity_t** actaddr2, gui_activity_t** actassetinfo1, gui_activity_t** actassetinfo2,
-    gui_activity_t** actwarning)
+    const bool is_address, const char* address_label, const char* amount, const char* ticker, const char* warning_msg,
+    gui_activity_t** acttickeramt, gui_activity_t** actaddr1, gui_activity_t** actaddr2, gui_activity_t** actwarning)
 {
     JADE_ASSERT(title);
     JADE_ASSERT(address_label);
     JADE_ASSERT(amount);
     JADE_ASSERT(ticker);
-    // asset info is both or neither
-    JADE_ASSERT(asset_id_hex);
-    JADE_ASSERT(!issuer == !strlen(asset_id_hex));
     // warning_msg is optional
     JADE_INIT_OUT_PPTR(acttickeramt);
     JADE_INIT_OUT_PPTR(actaddr1);
     JADE_INIT_OUT_PPTR(actaddr2);
-    JADE_INIT_OUT_PPTR(actassetinfo1);
-    JADE_INIT_OUT_PPTR(actassetinfo2);
     JADE_INIT_OUT_PPTR(actwarning);
 
     char display_str[128];
@@ -270,19 +129,7 @@ static gui_activity_t* make_input_output_activities(const char* title, const boo
 
     *acttickeramt = make_show_single_value_activity("Amount", display_str, show_help_btn);
 
-    // Third row, asset-info
-    gui_view_node_t* assetinfo = NULL;
-    if (issuer) {
-        ret = snprintf(display_str, sizeof(display_str), "%s - %s", issuer, asset_id_hex);
-        JADE_ASSERT(ret > 0 && ret < sizeof(display_str));
-
-        gui_make_text(&assetinfo, display_str, TFT_WHITE);
-        gui_set_align(assetinfo, GUI_ALIGN_LEFT, GUI_ALIGN_MIDDLE);
-
-        *actassetinfo1 = make_display_assetinfo_activities(ticker, issuer, asset_id_hex, actassetinfo2);
-    }
-
-    // Fourth row, warning
+    // Fourth row, warning (third row is the verified-wallet-output note)
     gui_view_node_t* warning = NULL;
     if (warning_msg) {
         gui_make_text(&warning, warning_msg, TFT_WHITE);
@@ -298,16 +145,16 @@ static gui_activity_t* make_input_output_activities(const char* title, const boo
     // Screen items
     btn_data_t menubtns[] = { { .content = splitaddr, .ev_id = BTN_SIGNTX_ADDRESS },
         { .content = splitamount, .ev_id = BTN_SIGNTX_TICKERAMOUNT },
-        { .content = assetinfo,
-            .txt = is_wallet_output && !assetinfo ? VERIFIED_WALLET_OUTPUT_MSG : NULL,
+        { .content = NULL,
+            .txt = is_wallet_output ? VERIFIED_WALLET_OUTPUT_MSG : NULL,
             .font = GUI_DEFAULT_FONT,
-            .ev_id = assetinfo ? BTN_SIGNTX_ASSETINFO : GUI_BUTTON_EVENT_NONE },
+            .ev_id = GUI_BUTTON_EVENT_NONE },
         { .content = warning,
-            .txt = is_wallet_output && assetinfo && !warning ? VERIFIED_WALLET_OUTPUT_MSG : NULL,
+            .txt = NULL,
             .font = GUI_DEFAULT_FONT,
             .ev_id = warning ? BTN_SIGNTX_WARNING : GUI_BUTTON_EVENT_NONE } };
 
-    const size_t num_btns = assetinfo || warning || is_wallet_output ? 4 : 2;
+    const size_t num_btns = warning || is_wallet_output ? 4 : 2;
     gui_activity_t* const act = make_menu_activity(title, hdrbtns, 2, menubtns, num_btns);
 
     // Set the initially selected item to the 'Next' button
@@ -316,9 +163,6 @@ static gui_activity_t* make_input_output_activities(const char* title, const boo
     // NOTE: can only set scrolling *after* gui tree created
     gui_set_text_scroll_selected(amountvalue, true, TFT_BLACK, gui_get_highlight_color());
     gui_set_text_scroll_selected(addr, true, TFT_BLACK, gui_get_highlight_color());
-    if (assetinfo) {
-        gui_set_text_scroll_selected(assetinfo, true, TFT_BLACK, gui_get_highlight_color());
-    }
     if (warning) {
         gui_set_text_scroll_selected(warning, true, TFT_BLACK, gui_get_highlight_color());
     }
@@ -330,44 +174,25 @@ static gui_activity_t* make_input_output_activities(const char* title, const boo
 // Displays a label or a destination address, passed amount (already formatted for display),
 // and the associated ticker if one is passed.
 //
-// It can also display:
-// a) Asset string (eg. issuer + asset-id) for liquid registered assets, and
-// b) any warning message that may be associated with this output.
+// It can also display any warning message that may be associated with this output.
 //
 // It is not valid to call this with both an address and a label string (but must have one).
 
 static bool show_input_output_activity(const char* title, const bool is_wallet_output, const bool is_address,
-    const char* address_label, const char* amount, const char* ticker, const char* issuer, const char* asset_id_hex,
-    const char* warning_msg)
+    const char* address_label, const char* amount, const char* ticker, const char* warning_msg)
 {
     JADE_ASSERT(title);
     JADE_ASSERT(address_label);
     JADE_ASSERT(amount);
     JADE_ASSERT(ticker);
-    // asset info is both or neither
-    JADE_ASSERT(!issuer == !asset_id_hex);
     // warning_msg is optional
-
-    char assethex[96];
-    if (asset_id_hex) {
-        JADE_ASSERT(strlen(asset_id_hex) == 64);
-        const int ret = snprintf(assethex, sizeof(assethex), "%.*s  %.*s  %.*s  %.*s  %.*s  %.*s  %.*s  %.*s", 8,
-            asset_id_hex, 8, asset_id_hex + 8, 8, asset_id_hex + 16, 8, asset_id_hex + 24, 8, asset_id_hex + 32, 8,
-            asset_id_hex + 40, 8, asset_id_hex + 48, 8, asset_id_hex + 56);
-        JADE_ASSERT(ret > 0 && ret < sizeof(assethex));
-    } else {
-        assethex[0] = '\0';
-    }
 
     gui_activity_t* act_tickeramt = NULL;
     gui_activity_t* act_addr1 = NULL;
     gui_activity_t* act_addr2 = NULL;
-    gui_activity_t* act_assetinfo1 = NULL;
-    gui_activity_t* act_assetinfo2 = NULL;
     gui_activity_t* act_warning = NULL;
     gui_activity_t* act_summary = make_input_output_activities(title, is_wallet_output, is_address, address_label,
-        amount, ticker, issuer, assethex, warning_msg, &act_tickeramt, &act_addr1, &act_addr2, &act_assetinfo1,
-        &act_assetinfo2, &act_warning);
+        amount, ticker, warning_msg, &act_tickeramt, &act_addr1, &act_addr2, &act_warning);
     gui_activity_t* act = act_summary;
 
     while (true) {
@@ -381,16 +206,11 @@ static bool show_input_output_activity(const char* title, const bool is_wallet_o
 
         case BTN_ADDRESS_REJECT:
         case BTN_ADDRESS_ACCEPT:
-        case BTN_SIGNTX_ASSETINFO_DONE:
             act = act_summary;
             break;
 
         case BTN_ADDRESS_NEXT:
             act = act_addr2;
-            break;
-
-        case BTN_SIGNTX_ASSETINFO_NEXT:
-            act = (act == act_assetinfo1) ? act_assetinfo2 : act_assetinfo1;
             break;
 
         case BTN_SIGNTX_ADDRESS:
@@ -399,10 +219,6 @@ static bool show_input_output_activity(const char* title, const bool is_wallet_o
 
         case BTN_SIGNTX_TICKERAMOUNT:
             act = act_tickeramt;
-            break;
-
-        case BTN_SIGNTX_ASSETINFO:
-            act = act_assetinfo1;
             break;
 
         case BTN_SIGNTX_WARNING:
@@ -421,7 +237,7 @@ static bool show_input_output_activity(const char* title, const bool is_wallet_o
 bool show_btc_transaction_outputs_activity(
     const network_t network_id, const struct wally_tx* tx, const output_info_t* output_info)
 {
-    JADE_ASSERT(!network_is_liquid(network_id));
+    JADE_ASSERT(network_id != NETWORK_NONE);
     JADE_ASSERT(tx);
     // Note: output_info is optional and can be null
 
@@ -466,7 +282,7 @@ bool show_btc_transaction_outputs_activity(
         // Show output info
         const char* msg = (output_info && strlen(output_info[i].message) > 0) ? output_info[i].message : NULL;
         if (!show_input_output_activity(
-                title, is_wallet_output, is_address, address, amount, TICKER_BTC, NULL, NULL, msg)) {
+                title, is_wallet_output, is_address, address, amount, TICKER_BTC, msg)) {
             // User pressed 'cancel'
             return false;
         }
@@ -475,176 +291,6 @@ bool show_btc_transaction_outputs_activity(
 
     // All outputs confirmed
     JADE_ASSERT(nDisplayedOutput == nTotalOutputsDisplayed);
-    return true;
-}
-
-bool show_elements_transaction_outputs_activity(const network_t network_id, const struct wally_tx* tx,
-    const output_info_t* output_info, const asset_info_t* assets, const size_t num_assets)
-{
-    JADE_ASSERT(network_is_liquid(network_id));
-    JADE_ASSERT(tx);
-    JADE_ASSERT(output_info);
-    JADE_ASSERT(assets || !num_assets);
-
-    // Don't show outputs which don't have a script (as these are fees)
-    const bool show_scriptless = false;
-
-    // 1 based indices for display purposes
-    uint32_t nDisplayedOutput = 0;
-    const uint32_t nTotalOutputsDisplayed = displayable_outputs(tx, output_info, show_scriptless);
-    const bool hiddenOutputs = nTotalOutputsDisplayed < tx->num_outputs;
-
-    // NOTE: because signing potentially has a lot of output info to display
-    // we deal with the outputs one at a time, rather than creating them all up-front.
-    gui_activity_t* act_clear = gui_make_activity();
-
-    for (size_t i = 0; i < tx->num_outputs; ++i) {
-        struct wally_tx_output* out = tx->outputs + i;
-
-        // Skip outputs we have automatically validated (eg. change outputs)
-        // also, skip/hide fees (ie. outputs sans script)
-        if (hiddenOutputs && !display_output(tx->outputs, output_info, i, show_scriptless)) {
-            continue;
-        }
-        ++nDisplayedOutput;
-
-        // Free all existing activities between outputs
-        gui_set_current_activity_ex(act_clear, true);
-
-        const bool is_wallet_output = output_info[i].flags & OUTPUT_FLAG_IS_OURS;
-
-        char title[16];
-        const int ret = snprintf(title, sizeof(title), "Output %ld/%ld", nDisplayedOutput, nTotalOutputsDisplayed);
-        JADE_ASSERT(ret > 0 && ret < sizeof(title));
-
-        // Get the address
-        char address[MAX_ADDRESS_LEN];
-        elements_script_to_address(network_id, out->script, out->script_len, output_info[i].value > 0,
-            (output_info[i].flags & OUTPUT_FLAG_HAS_BLINDING_KEY) ? output_info[i].blinding_key : NULL,
-            sizeof(output_info[i].blinding_key), address, sizeof(address));
-        const bool is_address = true;
-
-        // If there is no unblinded info, make warning/placeholder screen
-        // ATM assert that we always have unblinded info when displaying an output
-        JADE_ASSERT(output_info[i].flags & OUTPUT_FLAG_HAS_UNBLINDED);
-        if (!(output_info[i].flags & OUTPUT_FLAG_HAS_UNBLINDED)) {
-            if (!show_input_output_activity(title, is_wallet_output, is_address, address, "????", "????", "????",
-                    "????????????", BLINDED_OUTPUT)) {
-                // User pressed 'cancel'
-                return false;
-            }
-            // Move to next output
-            continue;
-        }
-
-        // Look up the asset-id in the asset-data
-        char issuer[128];
-        char asset_id_hex[2 * ASSET_TAG_LEN + 1];
-        char amount[32];
-        char ticker[ASSET_TICKER_MAX_LEN + 1];
-        const bool have_asset_info = get_asset_display_info(network_id, assets, num_assets, output_info[i].asset_id,
-            sizeof(output_info[i].asset_id), output_info[i].value, issuer, sizeof(issuer), asset_id_hex,
-            sizeof(asset_id_hex), amount, sizeof(amount), ticker, sizeof(ticker));
-
-        // Insert extra screen to display warning if the asset registry information is missing
-        if (!have_asset_info) {
-            // Make activity with no asset-id but with the warning message
-            if (!show_input_output_activity(title, is_wallet_output, is_address, address, amount, ticker, issuer,
-                    asset_id_hex, MISSING_ASSET_DATA)) {
-                // User pressed 'cancel'
-                return false;
-            }
-        }
-
-        // Normal output screen - with issuer and asset-id
-        const char* msg = (output_info && strlen(output_info[i].message) > 0) ? output_info[i].message : NULL;
-        if (have_asset_info || msg) {
-            if (!show_input_output_activity(
-                    title, is_wallet_output, is_address, address, amount, ticker, issuer, asset_id_hex, msg)) {
-                // User pressed 'cancel'
-                return false;
-            }
-        }
-        // else user pressed 'next', continue to next output
-    }
-
-    // All outputs confirmed
-    JADE_ASSERT(nDisplayedOutput == nTotalOutputsDisplayed);
-    return true;
-}
-
-static bool show_elements_asset_summary_activity(const char* title, const char* direction, const network_t network_id,
-    const asset_info_t* assets, const size_t num_assets, const asset_summary_t* sums, const size_t num_sums)
-{
-    JADE_ASSERT(title);
-    JADE_ASSERT(direction);
-    JADE_ASSERT(network_is_liquid(network_id));
-    JADE_ASSERT(assets || !num_assets);
-    JADE_ASSERT(sums);
-    JADE_ASSERT(num_sums);
-
-    for (size_t i = 0; i < num_sums; ++i) {
-        char label[16];
-        if (num_sums == 1) {
-            // Omit counter if just one input/output
-            const int ret = snprintf(label, sizeof(label), "%s", direction);
-            JADE_ASSERT(ret > 0 && ret < sizeof(label));
-        } else {
-            // 1 based indices for display purposes
-            const int ret = snprintf(label, sizeof(label), "%s  (%d/%d)", direction, i + 1, num_sums);
-            JADE_ASSERT(ret > 0 && ret < sizeof(label));
-        }
-        const bool is_address = false;
-        const bool is_wallet_output = false; // not used in this case
-
-        // Look up the asset-id in the asset-data
-        char issuer[128];
-        char asset_id_hex[2 * ASSET_TAG_LEN + 1];
-        char amount[32];
-        char ticker[ASSET_TICKER_MAX_LEN + 1];
-        const bool have_asset_info = get_asset_display_info(network_id, assets, num_assets, sums[i].asset_id,
-            sizeof(sums[i].asset_id), sums[i].value, issuer, sizeof(issuer), asset_id_hex, sizeof(asset_id_hex), amount,
-            sizeof(amount), ticker, sizeof(ticker));
-
-        // Normal output screen - with issuer and asset-id etc
-        const char* msg = !have_asset_info ? MISSING_ASSET_DATA : NULL;
-        if (!show_input_output_activity(
-                title, is_wallet_output, is_address, label, amount, ticker, issuer, asset_id_hex, msg)) {
-            // User pressed 'cancel'
-            return false;
-        }
-        // else user pressed 'next', continue to next summary
-    }
-
-    // All summaries confirmed
-    return true;
-}
-
-bool show_elements_swap_activity(const network_t network_id, const bool initial_proposal,
-    const asset_summary_t* in_sums, const size_t num_in_sums, const asset_summary_t* out_sums,
-    const size_t num_out_sums, const asset_info_t* assets, const size_t num_assets)
-{
-    JADE_ASSERT(network_is_liquid(network_id));
-    JADE_ASSERT(in_sums);
-    JADE_ASSERT(num_in_sums);
-    JADE_ASSERT(out_sums);
-    JADE_ASSERT(num_out_sums);
-    JADE_ASSERT(assets || !num_assets);
-
-    const char* title = initial_proposal ? "Swap Proposal" : "Complete Swap";
-
-    if (!show_elements_asset_summary_activity(
-            title, "Receive", network_id, assets, num_assets, out_sums, num_out_sums)) {
-        // User pressed 'cancel'
-        return false;
-    }
-
-    if (!show_elements_asset_summary_activity(title, "Send", network_id, assets, num_assets, in_sums, num_in_sums)) {
-        // User pressed 'cancel'
-        return false;
-    }
-
-    // Both swap legs confirmed
     return true;
 }
 
@@ -757,7 +403,7 @@ static bool show_final_confirmation_activity(
 
 bool show_btc_final_confirmation_activity(const network_t network_id, const uint64_t fee, const char* warning_msg)
 {
-    JADE_ASSERT(!network_is_liquid(network_id));
+    JADE_ASSERT(network_id != NETWORK_NONE);
 
     char feeamount[32];
     const int ret = snprintf(feeamount, sizeof(feeamount), "%.08f", 1.0 * fee / 1e8);
@@ -766,32 +412,4 @@ bool show_btc_final_confirmation_activity(const network_t network_id, const uint
     return show_final_confirmation_activity("Send Transaction", feeamount, TICKER_BTC, warning_msg);
 }
 
-bool show_elements_final_confirmation_activity(
-    const network_t network_id, const char* title, const uint64_t fee, const char* warning_msg)
-{
-    JADE_ASSERT(network_is_liquid(network_id));
-    JADE_ASSERT(title);
-
-    // Policy asset must be present in h/coded asset data, and it must have a 'ticker'
-    const char* asset_id_hex = network_to_policy_asset_hex(network_id);
-    JADE_ASSERT(asset_id_hex);
-    asset_info_t asset_info = {};
-    const bool have_asset_info = assets_get_info(network_id, NULL, 0, asset_id_hex, &asset_info);
-    JADE_ASSERT(have_asset_info);
-    JADE_ASSERT(asset_info.ticker);
-    JADE_ASSERT(asset_info.ticker_len);
-
-    // Ticker
-    char ticker[ASSET_TICKER_MAX_LEN + 1];
-    int ret = snprintf(ticker, sizeof(ticker), "%.*s", (int)asset_info.ticker_len, asset_info.ticker);
-    JADE_ASSERT(ret > 0 && ret < sizeof(ticker));
-
-    // Fee amount scaled and displayed at relevant precision
-    char feeamount[32];
-    const uint32_t scale_factor = get_asset_scale_factor(&asset_info);
-    ret = snprintf(feeamount, sizeof(feeamount), "%.*f", asset_info.precision, 1.0 * fee / scale_factor);
-    JADE_ASSERT(ret > 0 && ret < sizeof(feeamount));
-
-    return show_final_confirmation_activity(title, feeamount, ticker, warning_msg);
-}
 #endif // AMALGAMATED_BUILD

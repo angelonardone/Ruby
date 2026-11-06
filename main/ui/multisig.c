@@ -12,21 +12,18 @@ bool show_signer_activity(const signer_t* signer, size_t signer_number, size_t n
 
 static gui_activity_t* make_view_multisig_activities(const char* multisig_name, const bool initial_confirmation,
     const bool is_valid, const bool is_sorted, const size_t threshold, const size_t num_signers,
-    const char* master_blinding_key_hex, gui_activity_t** actname, gui_activity_t** acttype, gui_activity_t** actsorted,
-    gui_activity_t** actblindingkey)
+    gui_activity_t** actname, gui_activity_t** acttype, gui_activity_t** actsorted)
 {
     JADE_ASSERT(multisig_name);
-    // master blinding key is optional
     JADE_INIT_OUT_PPTR(actname);
     JADE_INIT_OUT_PPTR(acttype);
     JADE_INIT_OUT_PPTR(actsorted);
-    JADE_INIT_OUT_PPTR(actblindingkey);
 
     // initial confirmations can't be invalid
     JADE_ASSERT(!initial_confirmation || is_valid);
 
     const bool show_help_btn = false;
-    char display_str[2 * MULTISIG_MASTER_BLINDING_KEY_SIZE + 1];
+    char display_str[32];
 
     // First row, name
     gui_view_node_t* splitname;
@@ -94,28 +91,13 @@ static gui_activity_t* make_view_multisig_activities(const char* multisig_name, 
 
     *actsorted = make_show_single_value_activity("Sorted", is_sorted ? "Yes" : "No", show_help_btn);
 
-    // Forth row, blinding key
-    gui_view_node_t* splitblindingkey;
-    gui_make_hsplit(&splitblindingkey, GUI_SPLIT_RELATIVE, 2, 55, 45);
-
-    gui_view_node_t* blindingkey;
-    gui_make_text(&blindingkey, "Blinding Key: ", TFT_WHITE);
-    gui_set_align(blindingkey, GUI_ALIGN_RIGHT, GUI_ALIGN_MIDDLE);
-    gui_set_parent(blindingkey, splitblindingkey);
-
-    gui_make_text(&blindingkey, master_blinding_key_hex, TFT_WHITE);
-    gui_set_align(blindingkey, GUI_ALIGN_LEFT, GUI_ALIGN_MIDDLE);
-    gui_set_parent(blindingkey, splitblindingkey);
-
-    *actblindingkey = make_show_single_value_activity("Blinding Key", master_blinding_key_hex, show_help_btn);
-
     // Buttons - Delete and Next
     btn_data_t hdrbtns[] = { { .txt = "X", .font = GUI_TITLE_FONT, .ev_id = BTN_MULTISIG_DISCARD_DELETE },
         { .txt = ">", .font = JADE_SYMBOLS_16x16_FONT, .ev_id = BTN_MULTISIG_RETAIN_CONFIRM } };
 
     btn_data_t menubtns[] = { { .content = splitname, .ev_id = BTN_MULTISIG_NAME },
         { .content = splittype, .ev_id = BTN_MULTISIG_TYPE }, { .content = splitsorted, .ev_id = BTN_MULTISIG_SORTED },
-        { .content = splitblindingkey, .ev_id = BTN_MULTISIG_BLINDINGKEY } };
+        { .txt = NULL, .font = GUI_DEFAULT_FONT, .ev_id = GUI_BUTTON_EVENT_NONE } };
 
     const char* title = initial_confirmation ? "Register Multisig" : "Registered Wallet";
     gui_activity_t* const act = make_menu_activity(title, hdrbtns, 2, menubtns, 4);
@@ -127,7 +109,6 @@ static gui_activity_t* make_view_multisig_activities(const char* multisig_name, 
     gui_set_text_scroll_selected(name, true, TFT_BLACK, gui_get_highlight_color());
     // gui_set_text_scroll_selected(type, true, TFT_BLACK, gui_get_highlight_color());
     // gui_set_text_scroll_selected(sorted, true, TFT_BLACK, gui_get_highlight_color());
-    gui_set_text_scroll_selected(blindingkey, true, TFT_BLACK, gui_get_highlight_color());
 
     return act;
 }
@@ -135,31 +116,15 @@ static gui_activity_t* make_view_multisig_activities(const char* multisig_name, 
 // multisig details screen for viewing or confirmation
 // returns true if we are to store/retain this record, false if we are to discard/delete the record
 static bool show_view_multisig_activity(const char* multisig_name, const bool initial_confirmation, const bool is_valid,
-    const bool is_sorted, const size_t threshold, const size_t num_signers, const char* master_blinding_key_hex)
+    const bool is_sorted, const size_t threshold, const size_t num_signers)
 {
     JADE_ASSERT(multisig_name);
-
-    // Break up key string into groups of 8 chars
-    char blindingkeystr[96];
-    if (master_blinding_key_hex) {
-        JADE_ASSERT(strlen(master_blinding_key_hex) == 64);
-        const int ret
-            = snprintf(blindingkeystr, sizeof(blindingkeystr), "%.*s  %.*s  %.*s  %.*s  %.*s  %.*s  %.*s  %.*s", 8,
-                master_blinding_key_hex, 8, master_blinding_key_hex + 8, 8, master_blinding_key_hex + 16, 8,
-                master_blinding_key_hex + 24, 8, master_blinding_key_hex + 32, 8, master_blinding_key_hex + 40, 8,
-                master_blinding_key_hex + 48, 8, master_blinding_key_hex + 56);
-        JADE_ASSERT(ret > 0 && ret < sizeof(blindingkeystr));
-    } else {
-        blindingkeystr[0] = '\0';
-    }
 
     gui_activity_t* act_name = NULL;
     gui_activity_t* act_type = NULL;
     gui_activity_t* act_sorted = NULL;
-    gui_activity_t* act_blindingkey = NULL;
-    gui_activity_t* act_summary
-        = make_view_multisig_activities(multisig_name, initial_confirmation, is_valid, is_sorted, threshold,
-            num_signers, make_empty_none(blindingkeystr), &act_name, &act_type, &act_sorted, &act_blindingkey);
+    gui_activity_t* act_summary = make_view_multisig_activities(multisig_name, initial_confirmation, is_valid,
+        is_sorted, threshold, num_signers, &act_name, &act_type, &act_sorted);
     gui_activity_t* act = act_summary;
 
     while (true) {
@@ -181,10 +146,6 @@ static bool show_view_multisig_activity(const char* multisig_name, const bool in
 
         case BTN_MULTISIG_SORTED:
             act = act_sorted;
-            break;
-
-        case BTN_MULTISIG_BLINDINGKEY:
-            act = act_blindingkey;
             break;
 
         case BTN_MULTISIG_DISCARD_DELETE:
@@ -322,8 +283,8 @@ static bool show_final_multisig_summary_activity(const char* multisig_name, cons
 
 bool show_multisig_activity(const char* multisig_name, const bool is_sorted, const uint32_t threshold,
     const size_t num_signers, const signer_t* signer_details, const size_t num_signer_details,
-    const char* master_blinding_key_hex, const uint8_t* wallet_fingerprint, const size_t wallet_fingerprint_len,
-    const bool initial_confirmation, const bool overwriting, const bool is_valid)
+    const uint8_t* wallet_fingerprint, const size_t wallet_fingerprint_len, const bool initial_confirmation,
+    const bool overwriting, const bool is_valid)
 {
     JADE_ASSERT(multisig_name);
     JADE_ASSERT(!is_valid || threshold > 0);
@@ -344,8 +305,8 @@ bool show_multisig_activity(const char* multisig_name, const bool is_sorted, con
     while (true) {
         JADE_ASSERT(screen <= num_signer_details + 1);
         if (screen == 0) {
-            confirmed = show_view_multisig_activity(multisig_name, initial_confirmation, is_valid, is_sorted, threshold,
-                num_signers, master_blinding_key_hex);
+            confirmed = show_view_multisig_activity(
+                multisig_name, initial_confirmation, is_valid, is_sorted, threshold, num_signers);
             if (confirmed && is_valid) {
                 // Show more details
                 ++screen;

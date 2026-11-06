@@ -845,7 +845,7 @@ class JadeAPI:
         Parameters
         ----------
         network : str
-            The name of the network intended for use - eg. 'mainnet', 'liquid', 'testnet' etc.
+            The name of the network intended for use - eg. 'mainnet', 'testnet' etc.
             This is verified against the networks allowed on the hardware.
 
         http_request_fn : function, optional
@@ -920,7 +920,7 @@ class JadeAPI:
         Parameters
         ----------
         network : str
-            Network to which the xpub applies - eg. 'mainnet', 'liquid', 'testnet', etc.
+            Network to which the xpub applies - eg. 'mainnet', 'testnet', etc.
 
         path : [int]
             bip32 path for which the xpub should be generated.
@@ -946,7 +946,6 @@ class JadeAPI:
                 sorted - boolean, whether bip67 key sorting is applied
                 threshold - int, number of signers required,N
                 num_signers - total number of signatories, M
-                master_blinding_key - 32-bytes, any liquid master blinding key for this wallet
         """
         return self._jadeRpc('get_registered_multisigs')
 
@@ -987,7 +986,6 @@ class JadeAPI:
                     variant - str, script type, eg. 'sh(wsh(multi(k)))'
                     sorted - boolean, whether bip67 key sorting is applied
                     threshold - int, number of signers required,N
-                    master_blinding_key - 32-bytes, any liquid master blinding key for this wallet
                     signers - dict containing keys:
                         fingerprint - 4 bytes, origin fingerprint
                         derivation - [int], bip32 path from origin to signer xpub provided
@@ -999,8 +997,7 @@ class JadeAPI:
                   'as_file': as_file}
         return self._jadeRpc('get_registered_multisig', params)
 
-    def register_multisig(self, network, multisig_name, variant, sorted_keys, threshold, signers,
-                          master_blinding_key=None):
+    def register_multisig(self, network, multisig_name, variant, sorted_keys, threshold, signers):
         """
         RPC call to register a new multisig wallet, which must contain the hw signer.
         A registration name is provided - if it already exists that record is overwritten.
@@ -1008,7 +1005,7 @@ class JadeAPI:
         Parameters
         ----------
         network : string
-            Network to which the multisig should apply - eg. 'mainnet', 'liquid', 'testnet', etc.
+            Network to which the multisig should apply - eg. 'mainnet', 'testnet', etc.
 
         multisig_name : string
             Name to use to identify this multisig wallet registration record.
@@ -1031,13 +1028,6 @@ class JadeAPI:
                 - 'xpub' - str, base58 xpub of signer - will be verified for hw unit signer
                 - 'path' - [int], any fixed path to always apply after the xpub - usually empty.
 
-        master_blinding_key : 32-bytes, optional
-            The master blinding key to use for this multisig wallet on liquid.
-            Optional, defaults to None.
-            Logically mandatory when 'network' indicates a liquid network and the Jade is to be
-            used to generate confidential addresses, blinding keys, blinding nonces, asset blinding
-            factors or output commitments.
-
         Returns
         -------
         bool
@@ -1045,8 +1035,7 @@ class JadeAPI:
         """
         params = {'network': network, 'multisig_name': multisig_name,
                   'descriptor': {'variant': variant, 'sorted': sorted_keys,
-                                 'threshold': threshold, 'signers': signers,
-                                 'master_blinding_key': master_blinding_key}}
+                                 'threshold': threshold, 'signers': signers}}
         return self._jadeRpc('register_multisig', params)
 
     def register_multisig_file(self, multisig_file):
@@ -1087,7 +1076,6 @@ class JadeAPI:
             Each entry contains keys:
                 descriptor_len - int, length of descriptor output script
                 num_datavalues - int, total number of substitution placeholders passed with script
-                master_blinding_key - 32-bytes, any liquid master blinding key for this wallet
         """
         return self._jadeRpc('get_registered_descriptors')
 
@@ -1120,7 +1108,7 @@ class JadeAPI:
         Parameters
         ----------
         network : string
-            Network to which the descriptor should apply - eg. 'mainnet', 'liquid', 'testnet', etc.
+            Network to which the descriptor should apply - eg. 'mainnet', 'testnet', etc.
 
         descriptor_name : string
             Name to use to identify this descriptor wallet registration record.
@@ -1130,9 +1118,7 @@ class JadeAPI:
             The text of the output descriptor as a BIP 388 wallet policy.
 
         datavalues : dict
-            A dict of BIP 388 key placeholders (e.g. "@1") to key expressions. For
-            Liquid confidential descriptors, the blinding key placeholder used
-            in the "ct()" wrapper must be named "@B".
+            A dict of BIP 388 key placeholders (e.g. "@1") to key expressions.
 
         Returns
         -------
@@ -1144,8 +1130,7 @@ class JadeAPI:
         return self._jadeRpc('register_descriptor', params)
 
     def get_receive_address(self, *args, recovery_xpub=None, csv_blocks=0,
-                            variant=None, multisig_name=None, descriptor_name=None,
-                            confidential=None):
+                            variant=None, multisig_name=None, descriptor_name=None):
         """
         RPC call to generate, show, and return an address for the given path.
         The call has three forms.
@@ -1153,7 +1138,7 @@ class JadeAPI:
         Parameters
         ----------
         network: str
-            Network to which the address should apply - eg. 'mainnet', 'liquid', 'testnet', etc.
+            Network to which the address should apply - eg. 'mainnet', 'testnet', etc.
 
         Then either:
 
@@ -1225,9 +1210,6 @@ class JadeAPI:
             args += (recovery_xpub, csv_blocks)
 
         params = dict(zip(keys, args))
-        if confidential is not None:
-            params['confidential'] = confidential
-
         return self._jadeRpc('get_receive_address', params)
 
     def sign_message(self, path, message, use_ae_signatures=False,
@@ -1483,172 +1465,6 @@ class JadeAPI:
         params = {'challenge': challenge}
         return self._jadeRpc('sign_attestation', params)
 
-    def get_master_blinding_key(self, only_if_silent=False):
-        """
-        RPC call to fetch the master (SLIP-077) blinding key for the hw signer.
-        May block temporarily to request the user's permission to export.  Passing 'only_if_silent'
-        causes the call to return the 'denied' error if it would normally ask the user.
-        NOTE: the master blinding key of any registered multisig wallets can be obtained from
-        the result of `get_registered_multisigs()`.
-
-        Parameters
-        ----------
-        only_if_silent : boolean, optional
-            If True Jade will return the denied error if it would normally ask the user's permission
-            to export the master blinding key.  Passing False (or letting default) may block while
-            asking the user to confirm the export on Jade.
-
-        Returns
-        -------
-        32-bytes
-            SLIP-077 master blinding key
-        """
-        params = {'only_if_silent': only_if_silent}
-        return self._jadeRpc('get_master_blinding_key', params)
-
-    def get_blinding_key(self, script, multisig_name=None):
-        """
-        RPC call to fetch the public blinding key for the hw signer.
-
-        Parameters
-        ----------
-        script : bytes
-            The script for which the public blinding key is required.
-
-        multisig_name : str, optional
-            The name of any registered multisig wallet for which to fetch the blinding key.
-            Defaults to None
-
-        Returns
-        -------
-        33-bytes
-            Public blinding key for the passed script.
-        """
-        params = {'script': script, 'multisig_name': multisig_name}
-        return self._jadeRpc('get_blinding_key', params)
-
-    def get_shared_nonce(self, script, their_pubkey, include_pubkey=False, multisig_name=None):
-        """
-        RPC call to get the shared secret to unblind a tx, given the receiving script and
-        the pubkey of the sender (sometimes called "blinding nonce" in Liquid).
-        Optionally fetch the hw signer's public blinding key also.
-
-        Parameters
-        ----------
-        script : bytes
-            The script for which the blinding nonce is required.
-
-        their_pubkey : 33-bytes
-            The counterparty public key.
-
-        include_pubkey : bool, optional
-            Whether to also return the wallet's public blinding key.
-            Defaults to False.
-
-        multisig_name : str, optional
-            The name of any registered multisig wallet for which to fetch the blinding nonce.
-            Defaults to None
-
-        Returns
-        -------
-        1. include_pubkey is False
-        33-bytes
-            Public blinding nonce for the passed script and counterparty public key.
-
-        2. include_pubkey is True
-        dict
-            Contains keys:
-            shared_nonce - 32-bytes, public blinding nonce for the passed script as above.
-            blinding_key - 33-bytes, public blinding key for the passed script.
-        """
-        params = {'script': script, 'their_pubkey': their_pubkey,
-                  'include_pubkey': include_pubkey, 'multisig_name': multisig_name}
-        return self._jadeRpc('get_shared_nonce', params)
-
-    def get_blinding_factor(self, hash_prevouts, output_index, bftype, multisig_name=None):
-        """
-        RPC call to get deterministic blinding factors to blind an output.
-        Predicated on the host calculating the 'hash_prevouts' value correctly.
-        Can fetch abf, vbf, or both together.
-
-        Parameters
-        ----------
-
-        hash_prevouts : 32-bytes
-            This value should be computed by the host as specified in bip143.
-            It is not verified by Jade, since at this point Jade does not have the tx in question.
-
-        output_index : int
-            The index of the output we are trying to blind
-
-        bftype : str
-            Can be "ASSET", "VALUE", or "ASSET_AND_VALUE", to generate abf, vbf, or both.
-
-        multisig_name : str, optional
-            The name of any registered multisig wallet for which to fetch the blinding factor.
-            Defaults to None
-
-        Returns
-        -------
-        32-bytes or 64-bytes
-            The blinding factor for "ASSET" and "VALUE" requests, or both concatenated abf|vbf
-            ie. the first 32 bytes being abf, the second 32 bytes being vbf.
-        """
-        params = {'hash_prevouts': hash_prevouts,
-                  'output_index': output_index,
-                  'type': bftype,
-                  'multisig_name': multisig_name}
-        return self._jadeRpc('get_blinding_factor', params)
-
-    def get_commitments(self,
-                        asset_id,
-                        value,
-                        hash_prevouts,
-                        output_index,
-                        vbf=None,
-                        multisig_name=None):
-        """
-        RPC call to generate deterministic blinding factors and commitments for a given output.
-        Can optionally get a "custom" VBF, normally used for the last input where the vbf is not
-        computed here, but generated on the host according to all the other values.
-        The commitments generated here should be passed back into `sign_liquid_tx()`.
-
-        Parameters
-        ----------
-        asset_id : 32-bytes
-            asset_id as usually displayed - ie. reversed compared to network/consensus order
-
-        value : int
-            value in 'satoshi' or equivalent atomic integral unit
-
-        hash_prevouts : 32-bytes
-            This value is computed as specified in bip143.
-            It is verified immediately since at this point Jade doesn't have the tx in question.
-            It will be checked later during `sign_liquid_tx()`.
-
-        output_index : int
-            The index of the output we are trying to blind
-
-        vbf : 32-bytes, optional
-            The vbf to use, in preference to deterministically generating one in this call.
-
-        multisig_name : str, optional
-            The name of any registered multisig wallet for which to fetch the blinding factor.
-            Defaults to None
-
-        Returns
-        -------
-        dict
-            Containing the blinding factors and output commitments.
-        """
-        params = {'asset_id': asset_id,
-                  'value': value,
-                  'hash_prevouts': hash_prevouts,
-                  'output_index': output_index,
-                  'vbf': vbf,
-                  'multisig_name': multisig_name}
-        return self._jadeRpc('get_commitments', params)
-
     def _send_tx_inputs(self, base_id, inputs, use_ae_signatures=False, use_legacy=False):
         """
         Helper call to send the tx inputs to Jade for signing.
@@ -1659,7 +1475,7 @@ class JadeAPI:
             The ids of the messages sent will be increments from this base id.
 
         inputs : [dict]
-            The tx inputs - see `sign_tx()` / `sign_liquid_tx()` for details.
+            The tx inputs - see `sign_tx()` for details.
 
         use_ae_signatures : bool, optional
             Whether to use the Anti-Exfil protocol to generate the signatures. Anti-Exfil
@@ -1764,134 +1580,6 @@ class JadeAPI:
             assert len(signatures) == len(inputs)
             return signatures
 
-    def sign_liquid_tx(self, network, txn, inputs, commitments, change, use_ae_signatures=False,
-                       asset_info=None, additional_info=None, use_legacy=False):
-        """
-        RPC call to sign a liquid transaction.
-
-        Parameters
-        ----------
-        network : str
-            Network to which the txn should apply - eg. 'liquid', 'liquid-testnet', etc.
-
-        txn : bytes
-            The transaction to sign
-
-        inputs : [dict]
-            The tx inputs.
-                If signing this input, should contain keys:
-                is_witness, bool - Whether this is a segwit input
-                script, bytes - The redeem script
-                path, [int] - The bip32 path to sign with
-                value_commitment, 33-bytes - The value commitment of the input
-
-                This is optional:
-                sighash, int - The sighash to use, defaults to 0x0 (SIGHASH_DEFAULT) for
-                               taproot inputs, or 0x01 (SIGHASH_ALL) for other input types.
-
-                This is required for all inputs if any taproot input is being signed,
-                otherwise it can be ommmitted:
-                scriptpubkey, bytes - The scriptpubkey
-
-                These are only required for Anti-Exfil signatures:
-                ae_host_commitment, 32-bytes - The host-commitment for Anti-Exfil signatures
-                ae_host_entropy, 32-bytes - The host-entropy for Anti-Exfil signatures
-                Note that ae_host_commitment/ae_host_entropy must be empty for taproot inputs.
-
-                These are only required for advanced transactions, eg. swaps, and only when the
-                inputs need unblinding.
-                Not needed for vanilla send-payment/redeposit etc:
-                abf, 32-bytes - Asset blinding factor
-                asset_id, 32-bytes - The unblinded asset-id
-                asset_generator, 33-bytes - The (blinded) asset-generator (asset commitment)
-                vbf, 32-bytes - The value blinding factor
-                value, int - the unblinded sats value of the input
-
-                If not signing this input a null or an empty dict can be passed,
-                except in the case that any input being signed is taproot. For taproot
-                signing, 'scriptpubkey', 'value_commitment' and 'asset_generator' are
-                required for all inputs.
-
-        commitments : [dict]
-            An array sized for the number of outputs.
-            Unblinded outputs should have a 'null' placeholder element.
-            The commitments as retrieved from `get_commitments()`, with the addition of:
-                'blinding_key', <bytes> - the output's public blinding key
-                    (as retrieved from `get_blinding_key()`)
-
-        change : [dict]
-            An array sized for the number of outputs.
-            Outputs which are not to this wallet should have a 'null' placeholder element.
-            The output scripts for the elements with data will be verified by Jade.
-            Unless the element also contains 'is_change': False, these outputs will automatically
-            be approved and not be verified by the user.
-            Populated elements should contain sufficient data to generate the wallet address.
-            See `get_receive_address()`
-
-        use_ae_signatures : bool, optional
-            Whether to use the Anti-Exfil protocol to generate the signatures. Anti-Exfil
-            is enabled per-input by the presence of ae_host_commitment/ae_host_entropy.
-            Defaults to False.
-
-        asset_info : [dict], optional
-            Any asset-registry data relevant to the assets being transacted, such that Jade can
-            display a meaningful name, issuer, ticker etc. rather than just asset-id.
-            At the very least must contain 'asset_id', 'contract' and 'issuance_prevout' items,
-            exactly as in the registry data.  NOTE: asset_info for the network policy-asset is
-            not required.
-            Defaults to None.
-
-        additional_info: dict, optional
-            Extra data about the transaction.  Only required for advanced transactions, eg. swaps.
-            Not needed for vanilla send-payment/redeposit etc:
-            tx_type, str: 'swap' indicates the tx represents an asset-swap proposal or transaction.
-            wallet_input_summary, dict:  a list of entries containing 'asset_id' (32-bytes) and
-            'satoshi' (int) showing net movement of assets out of the wallet (ie. sum of wallet
-            inputs per asset, minus any change outputs).
-            wallet_output_summary, dict:  a list of entries containing 'asset_id' (32-bytes) and
-            'satoshi' (int) showing net movement of assets into the wallet (ie. sum of wallet
-            outputs per asset, excluding any change outputs).
-
-        use_legacy : bool, optional
-            Whether to use the legacy signing protocol to generate the signatures.
-            This protocol is deprecated and will be removed in a future firmware release.
-            This must be False to sign taproot inputs.
-            Defaults to False.
-
-        Returns
-        -------
-        1. if use_ae_signatures is False
-        [bytes,]
-            A list of signatures for each input given.
-            'None' is returned for any input that does not require a signature.
-
-        2. if use_ae_signatures is True
-        [(bytes, bytes),]
-            A list of (32 byte signer-commitment, signature) tuples for each input given.
-            '(None, sig)' is returned for any inputs where Anti-Exfil was not requested.
-            '(None, None)' is returned for any input that does not require a signature.
-
-        The signatures are either in DER format with the sighash appended, or
-        (for taproot inputs) 64/65 byte BIP 0341 Schnorr signatures.
-        """
-        # 1st message contains txn and number of inputs we are going to send.
-        # Reply ok if that corresponds to the expected number of inputs (n).
-        base_id = 100 * random.randint(1000, 9999)
-        params = {'network': network,
-                  'txn': txn,
-                  'num_inputs': len(inputs),
-                  'trusted_commitments': commitments,
-                  'use_ae_signatures': not use_legacy,
-                  'change': change,
-                  'asset_info': asset_info,
-                  'additional_info': additional_info}
-
-        reply = self._jadeRpc('sign_liquid_tx', params, str(base_id))
-        assert reply
-
-        # Send inputs and receive signatures
-        return self._send_tx_inputs(base_id, inputs, use_ae_signatures, use_legacy)
-
     def sign_tx(self, network, txn, inputs, change, use_ae_signatures=False, use_legacy=False):
         """
         RPC call to sign a btc transaction.
@@ -1976,7 +1664,7 @@ class JadeAPI:
         # Send inputs and receive signatures
         return self._send_tx_inputs(base_id, inputs, use_ae_signatures, use_legacy)
 
-    def sign_psbt(self, network, psbt, additional_info=None):
+    def sign_psbt(self, network, psbt):
         """
         RPC call to sign a passed psbt as required
 
@@ -1988,9 +1676,6 @@ class JadeAPI:
         psbt : bytes
             The psbt formatted as bytes
 
-        additional_info: dict, optional
-            Extra data about the transaction.  See sign_liquid_tx for details.
-
         Returns
         -------
         bytes
@@ -1998,8 +1683,6 @@ class JadeAPI:
         """
         # Send PSBT message
         params = {'network': network, 'psbt': psbt}
-        if additional_info:
-            params['additional_info'] = additional_info
         msgid = str(random.randint(100000, 999999))
         request = self.jade.build_request(msgid, 'sign_psbt', params)
         self.jade.write_request(request)

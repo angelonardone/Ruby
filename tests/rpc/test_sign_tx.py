@@ -3,20 +3,17 @@ import sys
 
 
 def _get_signing_data(test_case, tx):
-    """Helper to fetch the scriptpubkeys, assets and input values for sign_tx tests"""
+    """Helper to fetch the scriptpubkeys and input values for sign_tx tests"""
     test_input = test_case['input']
-    is_liquid = 'liquid' in test_input['network']
-    use_ae_signatures = test_input.get('use_ae_signatures', False)
 
     inputs = test_input['inputs']
     scriptpubkeys = wally.map_init(len(inputs), None)
     values = wally.map_init(len(inputs), None)
-    assets = wally.map_init(len(inputs), None) if is_liquid else None
     for i, inputdata in enumerate(inputs):
         if not inputdata:
             pass  # No-op
         elif inputdata.get('input_tx'):
-            # Bitcoin: Fetch info from the prevout for the input
+            # Fetch info from the prevout for the input
             utxo_index = wally.tx_get_input_index(tx, i)
             utxo = wally.tx_from_bytes(inputdata['input_tx'], 0)
             wally.map_add_integer(scriptpubkeys, i,
@@ -24,23 +21,15 @@ def _get_signing_data(test_case, tx):
             # Satoshi value (as uint64 native-endian bytes)
             value = wally.tx_get_output_satoshi(utxo, utxo_index)
             wally.map_add_integer(values, i, value.to_bytes(8, byteorder=sys.byteorder))
-        elif is_liquid:
-            # Liquid: Fetch info from the test case
-            if 'scriptpubkey' in inputdata:
-                wally.map_add_integer(scriptpubkeys, i, inputdata['scriptpubkey'])
-            if 'asset_generator' in inputdata:
-                wally.map_add_integer(assets, i, inputdata['asset_generator'])
-            if 'value_commitment' in inputdata:
-                wally.map_add_integer(values, i, inputdata['value_commitment'])
         else:
-            # Bitcoin: If no input_tx, sats can be passed instead (Deprecated).
+            # If no input_tx, sats can be passed instead (Deprecated).
             # Only valid for non-taproot, single-input segwit txns
             assert inputdata['is_witness']
             assert len(inputs) == 1
             # Satoshi value (as uint64 native-endian bytes)
             value = inputdata['satoshi']
             wally.map_add_integer(values, i, value.to_bytes(8, byteorder=sys.byteorder))
-    return scriptpubkeys, assets, values
+    return scriptpubkeys, values
 
 
 def _check_tx_signatures(jade, test_case, rslt):
@@ -53,24 +42,11 @@ def _check_tx_signatures(jade, test_case, rslt):
     # Get tx-level details
     test_input = test_case['input']
     network = test_input['network']
-    is_liquid = 'liquid' in network
     use_ae_signatures = test_input.get('use_ae_signatures', False)
 
-    if is_liquid:
-        # Liquid tx
-        tx = wally.tx_from_bytes(test_input['txn'], wally.WALLY_TX_FLAG_USE_ELEMENTS)
+    tx = wally.tx_from_bytes(test_input['txn'], 0)
 
-        # Poke any commitment data into tx outputs
-        for i, commitments in enumerate(test_input['trusted_commitments']):
-            if commitments \
-              and 'asset_generator' in commitments and 'value_commitment' in commitments:
-                wally.tx_set_output_asset(tx, i, commitments['asset_generator'])
-                wally.tx_set_output_value(tx, i, commitments['value_commitment'])
-    else:
-        # BTC tx, straightforward
-        tx = wally.tx_from_bytes(test_input['txn'], 0)
-
-    scriptpubkeys, assets, values = _get_signing_data(test_case, tx)
+    scriptpubkeys, values = _get_signing_data(test_case, tx)
     cache = wally.map_init(16, None)  # TODO: Use a wally constant when available
 
     # Iterate over the results verifying each signature
@@ -111,10 +87,9 @@ def _check_tx_signatures(jade, test_case, rslt):
         else:
             sighash_type = wally.WALLY_SIGTYPE_PRE_SW
 
-        key_version, codesep_pos, annex = 0, wally.WALLY_NO_CODESEPARATOR, None
-        genesis = get_genesis_blockhash(network)
+        key_version, codesep_pos, annex, genesis = 0, wally.WALLY_NO_CODESEPARATOR, None, None
         msghash = wally.tx_get_input_signature_hash(
-            tx, i, scriptpubkeys, assets, values, script, key_version,
+            tx, i, scriptpubkeys, None, values, script, key_version,
             codesep_pos, annex, genesis, sighash, sighash_type, cache)
 
         # Check sighash and verify signature!
@@ -139,40 +114,18 @@ def _check_tx_signatures(jade, test_case, rslt):
 
 def _test_sign_tx_case(jade, test_case):
     inputdata = test_case['input']
-    is_liquid = 'liquid' in inputdata['network']
-    if is_liquid and not get_jade_config().has_psram:
-        # Skip any liquid txns too large for reduced message buffer on no-psram devices
-        if len(inputdata['txn']) > (15 * 1024):  # estimate 1k for rest of message fields
-            logger.warning('Skipping test - tx too large for non-psram device')
-            return
-
-        # Skip any explicit proof tests which cannot be handled by no-psram devices
-        if any(tcs and ('value_blind_proof' in tcs or 'asset_blind_proof' in tcs)
-                for tcs in inputdata['trusted_commitments']):
-            logger.warning('Skipping test - explicit proofs too large for non-psram device')
-            return
     expected_output = test_case.get('expected_output')
     expected_error = test_case.get('expected_error')
     assert expected_output or expected_error
     use_ae_signatures = inputdata.get('use_ae_signatures')
     use_legacy_flow = not use_ae_signatures and not get_jade_config().no_legacy_flow
     try:
-        if is_liquid:
-            rslt = jade.sign_liquid_tx(inputdata['network'],
-                                       inputdata['txn'],
-                                       inputdata['inputs'],
-                                       inputdata['trusted_commitments'],
-                                       inputdata['change'],
-                                       use_ae_signatures,
-                                       inputdata.get('asset_info'),
-                                       inputdata.get('additional_info'))
-        else:
-            rslt = jade.sign_tx(inputdata['network'],
-                                inputdata['txn'],
-                                inputdata['inputs'],
-                                inputdata['change'],
-                                use_ae_signatures,
-                                use_legacy_flow)
+        rslt = jade.sign_tx(inputdata['network'],
+                            inputdata['txn'],
+                            inputdata['inputs'],
+                            inputdata['change'],
+                            use_ae_signatures,
+                            use_legacy_flow)
         assert not expected_error, f"Expected an error in {test_case['filename']}"
         # Check returned signatures
         _check_tx_signatures(jade, test_case, rslt)
@@ -212,16 +165,6 @@ def test_sign_tx_bad(jade, test_case):
     _test_sign_tx(jade, test_case)
 
 
-@with_test_cases('tests/rpc/data/sign_tx/liquid_tx_*.json')
-def test_sign_tx_liquid(jade, test_case):
-    _test_sign_tx(jade, test_case)
-
-
-@with_test_cases('tests/rpc/data/sign_tx/bad_liquid_tx_*.json')
-def test_sign_tx_bad_liquid(jade, test_case):
-    _test_sign_tx(jade, test_case)
-
-
 # Singlesig
 @pytest.mark.mnemonic(mnemonics.singlesig)
 @with_test_cases('tests/rpc/data/sign_tx/ss_tx_*.json')
@@ -233,79 +176,6 @@ def test_sign_tx_singlesig(jade, mnemonic, test_case):
 @with_test_cases('tests/rpc/data/sign_tx/bad_ss_tx_*.json')
 def test_sign_tx_bad_singlesig(jade, mnemonic, test_case):
     _test_sign_tx(jade, test_case)
-
-
-@pytest.mark.mnemonic(mnemonics.singlesig)
-@with_test_cases('tests/rpc/data/sign_tx/liquid_ss_tx_*.json')
-def test_sign_tx_liquid_singlesig(jade, mnemonic, test_case):
-    _test_sign_tx(jade, test_case)
-
-
-# TODO: Add singlesig liquid bad test cases
-# @pytest.mark.mnemonic(mnemonics.singlesig)
-# @with_test_cases('tests/rpc/data/sign_tx/bad_liquid_ss_tx_*.json')
-# def test_sign_tx_bad_liquid_singlesig(jade, mnemonic, test_case):
-#     _test_sign_tx(jade, test_case)
-
-
-@with_test_cases('tests/rpc/data/sign_tx/liquid_tx_asset_lowr.json')
-def test_sign_liquid_tx_too_many_assets(jade, test_case):
-    """More asset_info records than MAX_ASSET_INFO_ELEMS must be rejected"""
-    if not get_jade_config().has_psram:
-        pytest.skip('Oversized tx test requires PSRAM (larger inbound message buffer)')
-
-    inputdata = test_case['input']
-    assert 'liquid' in inputdata['network']
-    assert inputdata.get('asset_info'), 'test case must provide a valid asset record'
-
-    # Duplicate one valid record to exceed MAX_ASSET_INFO_ELEMS (64).
-    asset_info = [dict(inputdata['asset_info'][0]) for _ in range(64 + 1)]
-
-    try:
-        jade.sign_liquid_tx(inputdata['network'],
-                            inputdata['txn'],
-                            inputdata['inputs'],
-                            inputdata['trusted_commitments'],
-                            inputdata['change'],
-                            inputdata.get('use_ae_signatures', False),
-                            asset_info,
-                            inputdata.get('additional_info'))
-        assert False, 'Expected error for oversized asset_info array'
-    except JadeError as e:
-        assert e.code == JadeError.BAD_PARAMETERS, e
-        assert e.message == 'Invalid asset info passed', e.message
-
-
-@with_test_cases('tests/rpc/data/sign_tx/liquid_tx_swap_maker_send_lbtc_ae.json')
-def test_sign_liquid_tx_too_many_asset_summaries(jade, test_case):
-    """More wallet input/output summary records than the tx bounds must be rejected."""
-    inputdata = test_case['input']
-    assert 'liquid' in inputdata['network']
-
-    # This swap has a single input and output, so each summary must contain at
-    # most one record. Check both the input and output summaries.
-    for field in ('wallet_input_summary', 'wallet_output_summary'):
-        summary = inputdata['additional_info'][field]
-        assert len(summary) == 1, (field, summary)
-
-        # Duplicate one valid record so the array length exceeds the tx bound.
-        inputdata['additional_info'][field] = [dict(summary[0]), dict(summary[0])]
-        try:
-            jade.sign_liquid_tx(inputdata['network'],
-                                inputdata['txn'],
-                                inputdata['inputs'],
-                                inputdata['trusted_commitments'],
-                                inputdata['change'],
-                                inputdata.get('use_ae_signatures', False),
-                                inputdata.get('asset_info'),
-                                inputdata.get('additional_info'))
-            assert False, f'Expected error for oversized {field} array'
-        except JadeError as e:
-            assert e.code == JadeError.BAD_PARAMETERS, e
-            assert e.message == 'Invalid number of asset summaries', e.message
-        finally:
-            # Restore the original single-record summary for the next iteration
-            inputdata['additional_info'][field] = summary
 
 
 def _varint(n):

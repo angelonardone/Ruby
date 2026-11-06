@@ -10,36 +10,9 @@
 #include "../utils/network.h"
 #include "../wallet.h"
 
-#define COMMITMENTS_NONE 0x0
-#define COMMITMENTS_ABF 0x1
-#define COMMITMENTS_VBF 0x2
-#define COMMITMENTS_BLINDING_KEY 0x4
-#define COMMITMENTS_ASSET_BLIND_PROOF 0x8
-#define COMMITMENTS_VALUE_BLIND_PROOF 0x10
-
 #ifdef CONFIG_DEBUG_UNATTENDED_CI
 #define DEBUG_CI_DEFAULT_PIN 12345
 #endif
-
-// Holds asset/value blinding data
-typedef struct {
-    uint64_t value;
-    uint8_t asset_id[ASSET_TAG_LEN];
-    uint8_t abf[BLINDING_FACTOR_LEN];
-    uint8_t vbf[BLINDING_FACTOR_LEN];
-    uint8_t blinding_key[EC_PUBLIC_KEY_LEN];
-    uint8_t content;
-} commitment_t;
-
-// Holds asset/value blinding data plus the resulting blinded commitments/proofs
-typedef struct {
-    commitment_t c;
-    uint8_t value_blind_proof_len;
-    uint8_t asset_blind_proof[ASSET_EXPLICIT_SURJECTIONPROOF_LEN];
-    uint8_t value_blind_proof[ASSET_EXPLICIT_RANGEPROOF_MAX_LEN];
-    uint8_t asset_generator[ASSET_GENERATOR_LEN];
-    uint8_t value_commitment[ASSET_COMMITMENT_LEN];
-} ext_commitment_t;
 
 #define MAX_REQUEST_URLS 2
 
@@ -140,8 +113,6 @@ WARN_UNUSED_RESULT bool params_load_multisig(CborValue* params, char* multisig_n
 WARN_UNUSED_RESULT bool params_multisig_pubkeys(bool is_change, CborValue* params, multisig_data_t* multisig_data,
     uint8_t* pubkeys, size_t pubkeys_len, size_t* pubkeys_written, char* warningmsg, size_t warningmsg_len,
     const char** errmsg);
-WARN_UNUSED_RESULT bool params_get_master_blindingkey(
-    CborValue* params, uint8_t* master_blinding_key, size_t master_blinding_key_len, const char** errmsg);
 
 WARN_UNUSED_RESULT bool params_tx_input_signing_data(const bool use_ae_signatures, CborValue* params,
     input_data_t* sig_data, const uint8_t** ae_host_commitment, size_t* ae_host_commitment_len, const uint8_t** script,

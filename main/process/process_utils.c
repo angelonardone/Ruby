@@ -282,46 +282,6 @@ bool params_multisig_pubkeys(const bool is_change, CborValue* params, multisig_d
     return true;
 }
 
-// Get the relevant master blinding key (padded to 64-bytes for low-level calls).
-// This may be the master key with a multisig registration (if indicated in the parameters).
-// Otherwise, defaults to the master blinding key directly associated with this wallet/signer.
-bool params_get_master_blindingkey(
-    CborValue* params, uint8_t* master_blinding_key, const size_t master_blinding_key_len, const char** errmsg)
-{
-    JADE_ASSERT(params);
-    JADE_ASSERT(master_blinding_key);
-    JADE_ASSERT(master_blinding_key_len == HMAC_SHA512_LEN);
-    JADE_INIT_OUT_PPTR(errmsg);
-
-    // If no 'multisig_name' parameter, default to the signer's own master blinding key
-    if (!rpc_has_field_data("multisig_name", params)) {
-        memcpy(master_blinding_key, keychain_get()->master_unblinding_key, master_blinding_key_len);
-        return true;
-    }
-
-    // If is multisig, extract master key from multisig record
-    size_t written = 0;
-    char multisig_name[MAX_MULTISIG_NAME_SIZE];
-    rpc_get_string("multisig_name", sizeof(multisig_name), params, multisig_name, &written);
-    if (written == 0) {
-        *errmsg = "Invalid multisig name parameter";
-        return false;
-    }
-
-    multisig_data_t multisig_data = { 0 };
-    if (!multisig_load_from_storage(multisig_name, &multisig_data, NULL, 0, NULL, errmsg)) {
-        // 'errmsg' populated by above call
-        return false;
-    }
-
-    if (!multisig_get_master_blinding_key(&multisig_data, master_blinding_key, master_blinding_key_len, errmsg)) {
-        // 'errmsg' populated by above call
-        return false;
-    }
-
-    return true;
-}
-
 // Get the common parameters required when signing an tx input
 bool params_tx_input_signing_data(const bool use_ae_signatures, CborValue* params, input_data_t* input_data,
     const uint8_t** ae_host_commitment, size_t* ae_host_commitment_len, const uint8_t** script, size_t* script_len,

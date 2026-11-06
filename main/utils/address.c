@@ -54,7 +54,7 @@ static void render_op_return(
 void script_to_address(const network_t network_id, const uint8_t* script, const size_t script_len, const bool has_value,
     char* output, const size_t output_len)
 {
-    JADE_ASSERT(!network_is_liquid(network_id));
+    JADE_ASSERT(network_id != NETWORK_NONE);
     JADE_ASSERT(output);
     JADE_ASSERT(output_len);
 
@@ -98,94 +98,6 @@ void script_to_address(const network_t network_id, const uint8_t* script, const 
         ret = snprintf(output, output_len, "Unknown Address");
         JADE_ASSERT(ret > 0 && ret < output_len);
         break;
-    }
-
-    if (tmp_str) {
-        ret = snprintf(output, output_len, "%s", tmp_str);
-        JADE_ASSERT(ret > 0 && ret < output_len);
-        JADE_WALLY_VERIFY(wally_free_string(tmp_str));
-    }
-}
-
-// Convert the passed liquid script into an address (confidential if blinding key passed)
-void elements_script_to_address(const network_t network_id, const uint8_t* script, const size_t script_len,
-    const bool has_value, const uint8_t* blinding_key, const size_t blinding_key_len, char* output,
-    const size_t output_len)
-{
-    JADE_ASSERT(network_is_liquid(network_id));
-    JADE_ASSERT(output);
-    JADE_ASSERT(output_len);
-
-    int ret = 0;
-    if (!script || !script_len) {
-        ret = snprintf(output, output_len, "[FEE]");
-        JADE_ASSERT(ret > 0 && ret < output_len);
-        return;
-    }
-
-    size_t output_type = WALLY_SCRIPT_TYPE_UNKNOWN;
-    JADE_WALLY_VERIFY(wally_scriptpubkey_get_type(script, script_len, &output_type));
-
-    char* tmp_str = NULL;
-    uint8_t prefix = 0;
-    const char* hrp = NULL;
-    switch (output_type) {
-    case WALLY_SCRIPT_TYPE_P2WPKH:
-    case WALLY_SCRIPT_TYPE_P2WSH:
-    case WALLY_SCRIPT_TYPE_P2TR:
-        hrp = network_to_bech32_prefix(network_id);
-        JADE_ASSERT(hrp);
-        JADE_WALLY_VERIFY(wally_addr_segwit_from_bytes(script, script_len, hrp, 0, &tmp_str));
-        break;
-
-    case WALLY_SCRIPT_TYPE_P2PKH:
-        prefix = network_to_p2pkh_prefix(network_id);
-        base58_addr(prefix, script + 3, &tmp_str);
-        break;
-
-    case WALLY_SCRIPT_TYPE_P2SH:
-        prefix = network_to_p2sh_prefix(network_id);
-        base58_addr(prefix, script + 2, &tmp_str);
-        break;
-
-    case WALLY_SCRIPT_TYPE_OP_RETURN:
-        render_op_return(script, script_len, has_value, output, output_len);
-        break;
-
-    default:
-        // add a "[C]" prefix to show that the address is confidential
-        ret = snprintf(output, output_len, "%sUnknown Address", blinding_key ? "[C] " : "");
-        JADE_ASSERT(ret > 0 && ret < output_len);
-        break;
-    }
-
-    if (blinding_key) {
-        char* conf_tmp_str = NULL;
-        const char* hrpConfidential = NULL;
-
-        switch (output_type) {
-        case WALLY_SCRIPT_TYPE_P2WPKH:
-        case WALLY_SCRIPT_TYPE_P2WSH:
-        case WALLY_SCRIPT_TYPE_P2TR:
-            hrpConfidential = network_to_blech32_prefix(network_id);
-            JADE_ASSERT(hrpConfidential);
-            JADE_WALLY_VERIFY(wally_confidential_addr_from_addr_segwit(
-                tmp_str, hrp, hrpConfidential, blinding_key, blinding_key_len, &conf_tmp_str));
-            break;
-
-        case WALLY_SCRIPT_TYPE_P2PKH:
-        case WALLY_SCRIPT_TYPE_P2SH:
-            prefix = network_to_confidential_prefix(network_id);
-            JADE_WALLY_VERIFY(
-                wally_confidential_addr_from_addr(tmp_str, prefix, blinding_key, blinding_key_len, &conf_tmp_str));
-            break;
-        }
-
-        // swap the ptr
-        if (conf_tmp_str) {
-            JADE_WALLY_VERIFY(wally_free_string(tmp_str));
-            tmp_str = conf_tmp_str;
-        }
     }
 
     if (tmp_str) {
@@ -267,7 +179,7 @@ static bool try_parse_address(const network_t network_id, address_data_t* addr_d
 }
 
 // Try to parse a BTC address and extract the scriptpubkey or witness program
-// NOTE: elements is not supported atm
+// NOTE: Bitcoin addresses only
 bool parse_address(const char* address, address_data_t* addr_data)
 {
     JADE_ASSERT(address);

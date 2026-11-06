@@ -1688,10 +1688,6 @@ void initialise_with_mnemonic(const bool temporary_restore, const bool force_qr_
     (void)qr_scanned;
 #endif // CONFIG_HAS_CAMERA
 
-    // Set flag indicating whether we should ask the user before exporting the master blinding key
-    // (In advanced mode we ask the user, in default/basic mode we always silently export the key.)
-    keychain_set_confirm_export_blinding_key(advanced_mode);
-
     if (!derive_keychain(temporary_restore, mnemonic)) {
         // Error making wallet...
         JADE_LOGE("Failed to derive keychain from valid mnemonic");

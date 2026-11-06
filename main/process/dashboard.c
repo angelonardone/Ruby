@@ -140,12 +140,6 @@ void sign_identity_process(void* process_ptr);
 void sign_message_process(void* process_ptr);
 void sign_psbt_process(void* process_ptr);
 void sign_tx_process(void* process_ptr);
-void get_master_blinding_key_process(void* process_ptr);
-void get_blinding_key_process(void* process_ptr);
-void get_shared_nonce_process(void* process_ptr);
-void get_commitments_process(void* process_ptr);
-void get_blinding_factor_process(void* process_ptr);
-void sign_liquid_tx_process(void* process_ptr);
 void get_bip85_pubkey_process(void* process_ptr);
 void sign_bip85_digests_process(void* process_ptr);
 void show_bip85_bip39_entropy_process(void* process_ptr);
@@ -224,13 +218,11 @@ bool select_registered_wallet(const char multisig_names[][NVS_KEY_NAME_MAX_SIZE]
     bool* is_multisig);
 gui_activity_t* make_view_delete_wallet_activity(const char* wallet_name, bool allow_export);
 bool show_multisig_activity(const char* multisig_name, bool is_sorted, uint32_t threshold, size_t num_signers,
-    const signer_t* signer_details, size_t num_signer_details, const char* master_blinding_key_hex,
-    const uint8_t* wallet_fingerprint, size_t wallet_fingerprint_len, bool initial_confirmation, bool overwriting,
-    bool is_valid);
+    const signer_t* signer_details, size_t num_signer_details, const uint8_t* wallet_fingerprint,
+    size_t wallet_fingerprint_len, bool initial_confirmation, bool overwriting, bool is_valid);
 bool show_descriptor_activity(const char* descriptor_name, const descriptor_data_t* descriptor,
-    const char* blinding_key, const signer_t* signer_details, size_t num_signer_details,
-    const uint8_t* wallet_fingerprint, size_t wallet_fingerprint_len, network_t network_id, bool initial_confirmation,
-    bool overwriting, bool is_valid);
+    const signer_t* signer_details, size_t num_signer_details, const uint8_t* wallet_fingerprint,
+    size_t wallet_fingerprint_len, network_t network_id, bool initial_confirmation, bool overwriting, bool is_valid);
 
 gui_activity_t* make_session_activity(void);
 gui_activity_t* make_ble_activity(gui_view_node_t** ble_status_item);
@@ -593,18 +585,6 @@ static void dispatch_message(jade_process_t* process)
             task_function = sign_psbt_process;
         } else if (IS_METHOD("sign_tx")) {
             task_function = sign_tx_process;
-        } else if (IS_METHOD("sign_liquid_tx")) {
-            task_function = sign_liquid_tx_process;
-        } else if (IS_METHOD("get_commitments")) {
-            task_function = get_commitments_process;
-        } else if (IS_METHOD("get_blinding_factor")) {
-            task_function = get_blinding_factor_process;
-        } else if (IS_METHOD("get_master_blinding_key")) {
-            task_function = get_master_blinding_key_process;
-        } else if (IS_METHOD("get_blinding_key")) {
-            task_function = get_blinding_key_process;
-        } else if (IS_METHOD("get_shared_nonce")) {
-            task_function = get_shared_nonce_process;
         } else if (IS_METHOD("get_bip85_pubkey")) {
             task_function = get_bip85_pubkey_process;
         } else if (IS_METHOD("get_bip85_bip39_entropy")) {
@@ -1088,7 +1068,6 @@ static void handle_registered_wallets(void)
     uint8_t fingerprint[BIP32_KEY_FINGERPRINT_LEN];
     wallet_get_fingerprint(fingerprint, sizeof(fingerprint));
     signer_t* const signer_details = JADE_CALLOC(MAX_ALLOWED_SIGNERS, sizeof(signer_t));
-    char* blinding_key = NULL;
 
     done = false;
     while (!done) {
@@ -1171,24 +1150,14 @@ static void handle_registered_wallets(void)
                     // Display details on screen
                     JADE_ASSERT(ev_id == BTN_VIEW_WALLET);
 
-                    char* master_blinding_key_hex = NULL;
-                    if (is_valid && multisig_data.master_blinding_key_len) {
-                        JADE_WALLY_VERIFY(wally_hex_from_bytes(multisig_data.master_blinding_key,
-                            multisig_data.master_blinding_key_len, &master_blinding_key_hex));
-                    }
-
                     // We are not confirming or writing-to-storage
                     const bool initial_confirmation = false;
                     const bool overwriting = false;
                     if (!show_multisig_activity(wallet_name, multisig_data.sorted, multisig_data.threshold,
-                            multisig_data.num_xpubs, signer_details, num_signer_details, master_blinding_key_hex,
-                            fingerprint, sizeof(fingerprint), initial_confirmation, overwriting, is_valid)) {
+                            multisig_data.num_xpubs, signer_details, num_signer_details, fingerprint,
+                            sizeof(fingerprint), initial_confirmation, overwriting, is_valid)) {
                         // Delete record ?
                         done = offer_delete_registered_wallet(wallet_name, is_multisig);
-                    }
-
-                    if (master_blinding_key_hex) {
-                        JADE_WALLY_VERIFY(wally_free_string(master_blinding_key_hex));
                     }
                 }
             } else {
@@ -1205,16 +1174,10 @@ static void handle_registered_wallets(void)
                 // No option to export (atm)
                 JADE_ASSERT(ev_id == BTN_VIEW_WALLET);
 
-                // Free any blinding_key from a previous pass through the loop
-                if (blinding_key) {
-                    JADE_WALLY_VERIFY(wally_free_string(blinding_key));
-                    blinding_key = NULL;
-                }
-
                 // Get signer info from descriptor
                 size_t num_signer_details = 0;
                 if (!descriptor_get_signers(wallet_name, &descriptor, NETWORK_NONE, NULL, signer_details,
-                        MAX_ALLOWED_SIGNERS, &num_signer_details, &blinding_key, &errmsg)) {
+                        MAX_ALLOWED_SIGNERS, &num_signer_details, &errmsg)) {
                     JADE_LOGE("Failed to load signer information from descriptor data");
                     await_error_2("Unable to load", "signer details");
                     continue;
@@ -1223,9 +1186,8 @@ static void handle_registered_wallets(void)
                 // We are not confirming or writing-to-storage
                 const bool initial_confirmation = false;
                 const bool overwriting = false;
-                if (!show_descriptor_activity(wallet_name, &descriptor, blinding_key, signer_details,
-                        num_signer_details, fingerprint, sizeof(fingerprint), NETWORK_NONE, initial_confirmation,
-                        overwriting, is_valid)) {
+                if (!show_descriptor_activity(wallet_name, &descriptor, signer_details, num_signer_details,
+                        fingerprint, sizeof(fingerprint), NETWORK_NONE, initial_confirmation, overwriting, is_valid)) {
                     // Delete record ?
                     done = offer_delete_registered_wallet(wallet_name, is_multisig);
                 }
@@ -1233,11 +1195,8 @@ static void handle_registered_wallets(void)
         }
     }
 
-    // Free any signer / blinding key details
+    // Free any signer details
     free(signer_details);
-    if (blinding_key) {
-        JADE_WALLY_VERIFY(wally_free_string(blinding_key));
-    }
 }
 
 static void set_wallet_erase_pin(void)

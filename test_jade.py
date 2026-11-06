@@ -46,13 +46,6 @@ def h2b(hexdata):
         return bytes.fromhex(hexdata)
 
 
-def _h2b_additional_info(additional_info):
-    for summary_item in additional_info['wallet_input_summary']:
-        summary_item['asset_id'] = h2b(summary_item['asset_id'])
-    for summary_item in additional_info['wallet_output_summary']:
-        summary_item['asset_id'] = h2b(summary_item['asset_id'])
-
-
 def _h2b_test_case(testcase):
     # Convert fields from hex to binary
     if 'txn' in testcase['input']:
@@ -64,15 +57,6 @@ def _h2b_test_case(testcase):
                 for k, v in input.items():
                     if k not in ['is_witness', 'path', 'sighash', 'satoshi', 'value']:
                         input[k] = h2b(v)
-
-        if 'trusted_commitments' in testcase['input']:
-            for commitment in testcase['input']['trusted_commitments']:
-                if commitment:
-                    for k, v in commitment.items():
-                        commitment[k] = v if k == 'value' else h2b(v)
-
-        if 'additional_info' in testcase['input']:
-            _h2b_additional_info(testcase['input']['additional_info'])
 
         for k in ['expected_output', 'expected_legacy_output']:
             if k in testcase:
@@ -100,33 +84,8 @@ def _h2b_test_case(testcase):
 
     elif 'multisig_name' in testcase['input']:
         # multisig data
-        descriptor = testcase['input']['descriptor']
-        if 'master_blinding_key' in descriptor:
-            descriptor['master_blinding_key'] = h2b(descriptor['master_blinding_key'])
-
         for signer in testcase['input']['descriptor']['signers']:
             signer['fingerprint'] = h2b(signer['fingerprint'])
-
-        if 'blinding_key_tests' in testcase:
-            for blinding_test in testcase['blinding_key_tests']:
-                blinding_test['script'] = h2b(blinding_test['script'])
-                blinding_test['their_pubkey'] = h2b(blinding_test['their_pubkey'])
-                blinding_test['expected_blinding_key'] = h2b(blinding_test['expected_blinding_key'])
-                blinding_test['expected_shared_nonce'] = h2b(blinding_test['expected_shared_nonce'])
-
-        if 'commitments_tests' in testcase:
-            for blinding_test in testcase['commitments_tests']:
-                blinding_test['hash_prevouts'] = h2b(blinding_test['hash_prevouts'])
-                blinding_test['asset_id'] = h2b(blinding_test['asset_id'])
-                blinding_test['abf'] = h2b(blinding_test['abf'])
-                blinding_test['vbf'] = h2b(blinding_test['vbf'])
-                blinding_test['asset_generator'] = h2b(blinding_test['asset_generator'])
-                blinding_test['value_commitment'] = h2b(blinding_test['value_commitment'])
-
-    elif 'multisig_file' in testcase['input']:
-        expected_result = testcase.get('expected_result')
-        if expected_result and 'master_blinding_key' in expected_result:
-            expected_result['master_blinding_key'] = h2b(expected_result['master_blinding_key'])
 
     elif 'descriptor_name' in testcase['input']:
         # descriptor data
@@ -179,11 +138,6 @@ slot invite sadness banana'
 # You need to poke the seed below into the wallet as a base58 wif, as below:
 # bitcoin-cli sethdseed true "92zRAmYnWVRrWJ6cQb8yrzEz9r3aXj4oEUiPAZEbiPKHpCnxkKz"
 #
-# NOTE: if using liquid you also need to import the master-blindingkey (which
-# green/wally derives from the seed using slip77, but elements-core does not)
-# elements-cli importmasterblindingkey
-#                     "946549f3bb3fc7449a6e86908b3bf1cc19f50cbdd9c1c459632b7624b397aec1"
-#
 # To generate txns it'll need some funds!
 # Get an address and mine over 100 blocks to that address to get some money
 # in the wallet.  eg:
@@ -197,31 +151,20 @@ slot invite sadness banana'
 # resulting descriptors and multisig testing setup.
 # NOTE: for get-xpub the root (empty path array) can be accessed (to allow
 # external creation of watch-only public key tree)
-# NOTE: networks 'liquid' and 'mainnet' result in 'xpub' prefix, else 'tpub'
+# NOTE: network 'mainnet' results in 'xpub' prefix, else 'tpub'
 GET_XPUB_DATA = [([], 'testnet', 'tpubD6NzVbkrYhZ4Y6YYLhPsm1vVhs7CDSvoxfTTohcN\
 PigN2RkeMJL3gTWav9fCicJsC7eSyARLKi8Q3UU825cz65meRQFFfqTYfBBy3MHC6Vn'),
                  ([], 'mainnet', 'xpub661MyMwAqRbcGJMgtWQnZ6b8Nk1YE4RkR2sAT9ZE\
 3ovUH95wH5UxY1qkg7aRC7MdQD7YMauTncJMMHyWdDmkCeKMMoVwzJoK5DbZHHhinUQ'),
-                 ([], 'liquid', 'xpub661MyMwAqRbcGJMgtWQnZ6b8Nk1YE4RkR2sAT9ZE3\
-ovUH95wH5UxY1qkg7aRC7MdQD7YMauTncJMMHyWdDmkCeKMMoVwzJoK5DbZHHhinUQ'),
                  ([0], 'localtest', 'tpubD9wHvxq4yutRJBbRis4guqLvvAZqppKmMJmqD\
 i4HVtVRTRKKTMzomHx77PqcprGZf6UuzwiWn8QWbUx3ECSUStzMHFPJM2e16VUoqEGnkk7'),
                  ([6], 'localtest', 'tpubD9wHvxq4yutRaYSLLTxkMuSGafH6NyQMJeGhq\
 sug25o2p9KMNqZAcSV1eYcX31eVXf5vS8MYUPp5Cr2HHAkmpgAHQHa7iG4bqW6ajLq6WVk'),
-                 ([12, 123], 'localtest-liquid', 'tpubDBdwuiH7nSNmLs5ffMyv3jXv\
-ZrqFgimAbxXvxhWgXWATBTYPjiBbEDRzanF6YBHCaPoMF8XJNJdsUeXZHBuy3tkUSbEYh3o1M6fEfM\
-fdBV5'),
                  ([18, 986], 'mainnet', 'xpub6BYx1MizD2XPpY6EuF5Pso8cG5fVHJEWn\
 iziGqXcrrcqH96MUiPcuNQkfKSnGx9tCvBJBZx35fiZE3zBbVkZqH89TU4W6HkyE9fSUx9QHNX'),
                  ([2147483651, 2147483648], 'mainnet', 'xpub69w5Svpcz1iNw383Q4\
 dcKTH7DVwPinVYL8Ka7S61gskwY8SW4YeeCny4xdxhR9yFhPxGDJ9Yne8PNQFoqkVdUK2whQ9bJiZu\
-MarKPtCixrX'),
-                 ([2147483651, 2147483651], 'liquid', 'xpub69w5Svpcz1iP4ocLTZ9\
-3HDnRkFwKRUomwEZwFuafNnDhTWirvUFxbtou6KQMT83gnyjZAKmsD8oTST6FTj5dgAZn5EP6KMPZw\
-QGEQu1tqez'),
-                 ([2147483692, 0, 1, 2], 'testnet-liquid', 'tpubDFHUCdwiKzeyST\
-BkMyPec9y9VSwwVgn1AftmefpKLYTPrChSCTbHAnbXtSQTB8qEvR8H6nt3sBwNAUeYZK5oc75dWDiY\
-WBrYcMRYW2DGU1Z')]
+MarKPtCixrX')]
 
 
 # The tests

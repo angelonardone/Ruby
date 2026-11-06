@@ -19,15 +19,13 @@
 #include <sodium/utils.h>
 
 bool show_multisig_activity(const char* multisig_name, bool is_sorted, uint32_t threshold, size_t num_signers,
-    const signer_t* signer_details, const size_t num_signer_details, const char* master_blinding_key_hex,
-    const uint8_t* wallet_fingerprint, size_t wallet_fingerprint_len, bool initial_confirmation, bool overwriting,
-    bool is_valid);
+    const signer_t* signer_details, const size_t num_signer_details, const uint8_t* wallet_fingerprint,
+    size_t wallet_fingerprint_len, bool initial_confirmation, bool overwriting, bool is_valid);
 
 // Function to validate multisig parameters and persist the record
 static int register_multisig(const char* multisig_name, const network_t network_id,
     const script_variant_t script_variant, const bool sorted, const uint32_t threshold, const signer_t* signers,
-    const size_t num_signers, const uint8_t* master_blinding_key, const size_t master_blinding_key_len,
-    const char** errmsg)
+    const size_t num_signers, const char** errmsg)
 {
     JADE_ASSERT(multisig_name);
     JADE_ASSERT(is_multisig(script_variant));
@@ -63,10 +61,10 @@ static int register_multisig(const char* multisig_name, const network_t network_
     }
 
     int retval = 0;
-    const size_t registration_len = MULTISIG_BYTES_LEN(master_blinding_key_len, num_signers, total_num_path_elements);
+    const size_t registration_len = MULTISIG_BYTES_LEN(num_signers, total_num_path_elements);
     uint8_t* const registration = JADE_MALLOC(registration_len);
-    if (!multisig_data_to_bytes(script_variant, sorted, threshold, master_blinding_key, master_blinding_key_len,
-            signers, num_signers, total_num_path_elements, registration, registration_len)) {
+    if (!multisig_data_to_bytes(script_variant, sorted, threshold, signers, num_signers, total_num_path_elements,
+            registration, registration_len)) {
         *errmsg = "Failed to serialise multisig";
         retval = CBOR_RPC_INTERNAL_ERROR;
         goto cleanup;
@@ -97,19 +95,10 @@ static int register_multisig(const char* multisig_name, const network_t network_
     }
 
     // Check to see whether user accepted or declined
-    char* master_blinding_key_hex = NULL;
-    if (master_blinding_key_len) {
-        JADE_WALLY_VERIFY(wally_hex_from_bytes(master_blinding_key, master_blinding_key_len, &master_blinding_key_hex));
-    }
-    // Check to see whether user accepted or declined
     const bool is_valid = true;
     const bool initial_confirmation = true;
     const bool confirmed = show_multisig_activity(multisig_name, sorted, threshold, num_signers, signers, num_signers,
-        master_blinding_key_hex, wallet_fingerprint, sizeof(wallet_fingerprint), initial_confirmation, overwriting,
-        is_valid);
-    if (master_blinding_key_hex) {
-        JADE_WALLY_VERIFY(wally_free_string(master_blinding_key_hex));
-    }
+        wallet_fingerprint, sizeof(wallet_fingerprint), initial_confirmation, overwriting, is_valid);
 
     if (!confirmed) {
         JADE_LOGW("User declined to register multisig");
@@ -219,7 +208,6 @@ static bool split_line(
 #define FIELD_POLICY 0x2
 #define FIELD_FORMAT 0x4
 #define FIELD_SORTED 0x8
-#define FIELD_BLINDINGKEY 0x10
 #define FIELD_DERIVATION 0x20
 
 // Match the current line to a specific trial field, passed as a char[]
@@ -257,11 +245,6 @@ int register_multisig_file(const char* multisig_file, const size_t multisig_file
 
     // Optional 'sorted multi' field
     bool sorted = true; // for historical reasons defaults to 'true'
-
-    // Optional extension
-    uint8_t blinding_key_bytes[MULTISIG_MASTER_BLINDING_KEY_SIZE];
-    const uint8_t* blinding_key = NULL;
-    size_t blinding_key_len = 0;
 
     // Current signer's derivation path
     // (Can be global, or set per signer)
@@ -394,26 +377,6 @@ int register_multisig_file(const char* multisig_file, const size_t multisig_file
                 goto cleanup;
             }
             fields_read |= FIELD_SORTED;
-        } else if (IS_FIELD(MSIG_FILE_BLINDING_KEY)) {
-            if (fields_read & FIELD_BLINDINGKEY) {
-                JADE_LOGE("Repeated blinding key flag");
-                *errmsg = "Invalid multisig file";
-                goto cleanup;
-            }
-
-            // Master blinding key
-            size_t written = 0;
-            if (value_len != 2 * sizeof(blinding_key_bytes)
-                || wally_hex_n_to_bytes(value, value_len, blinding_key_bytes, sizeof(blinding_key_bytes), &written)
-                    != WALLY_OK
-                || written != sizeof(blinding_key_bytes)) {
-                JADE_LOGE("Error in master blinding key hex: %s", value);
-                *errmsg = "Invalid master blinding key";
-                goto cleanup;
-            }
-            blinding_key = blinding_key_bytes;
-            blinding_key_len = sizeof(blinding_key_bytes);
-            fields_read |= FIELD_BLINDINGKEY;
         } else if (IS_FIELD(MSIG_FILE_DERIVATION)) {
             // "m/a/b/c/d" - accepts m/ or M/ as master, and h, H or ' as hardened indicators
             // NOTE: allowed to see derivation element multiple times (eg once per signer)
@@ -427,7 +390,7 @@ int register_multisig_file(const char* multisig_file, const size_t multisig_file
         } else if (name_len == BIP32_KEY_FINGERPRINT_LEN * 2) {
             // Assume <fingerprint>: <xpub>
             // Must have all other mandatory fields before we get to signers
-            // (NOTE: for historical reasons 'sorted' field is optional, as is blinding-key)
+            // (NOTE: for historical reasons 'sorted' field is optional)
             if (!HAVE_FIELDS(fields_read, (FIELD_NAME | FIELD_POLICY | FIELD_FORMAT | FIELD_DERIVATION))) {
                 JADE_LOGE("Insufficient information read from multisig file when signers reached: %u", fields_read);
                 *errmsg = "Insufficient information records";
@@ -511,7 +474,7 @@ int register_multisig_file(const char* multisig_file, const size_t multisig_file
     };
     JADE_LOGD("Processing multisig file complete: %u", fields_read);
 
-    // File exhausted - did we read all required data (Note: 'sorted' and blinding-key fields are optional)
+    // File exhausted - did we read all required data (Note: 'sorted' field is optional)
     if (!HAVE_FIELDS(fields_read, (FIELD_NAME | FIELD_POLICY | FIELD_FORMAT | FIELD_DERIVATION))) {
         JADE_LOGE("Insufficient information read from multisig file: %u", fields_read);
         *errmsg = "Insufficient information records";
@@ -536,8 +499,7 @@ int register_multisig_file(const char* multisig_file, const size_t multisig_file
     }
 
     // Try to register multisig!
-    retval = register_multisig(multisig_name, network_id, script_variant, sorted, threshold, signers, nsigners,
-        blinding_key, blinding_key_len, errmsg);
+    retval = register_multisig(multisig_name, network_id, script_variant, sorted, threshold, signers, nsigners, errmsg);
     if (retval) {
         JADE_LOGE("Failed to register multisig record: %s", *errmsg);
         goto cleanup;
@@ -694,15 +656,10 @@ void register_multisig_process(void* process_ptr)
         }
     }
 
-    // Liquid master blinding key for this multisig wallet
-    const uint8_t* master_blinding_key = NULL;
-    size_t master_blinding_key_len = 0;
+    // Ruby: no Liquid support, so no (Liquid) master blinding key
     if (rpc_has_field_data("master_blinding_key", &descriptor)) {
-        rpc_get_bytes_ptr("master_blinding_key", &descriptor, &master_blinding_key, &master_blinding_key_len);
-        if (!master_blinding_key || master_blinding_key_len != MULTISIG_MASTER_BLINDING_KEY_SIZE) {
-            jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, "Invalid blinding key value");
-            goto cleanup;
-        }
+        jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, "Liquid blinding keys are not supported");
+        goto cleanup;
     }
 
     // Threshold
@@ -723,8 +680,8 @@ void register_multisig_process(void* process_ptr)
     }
     jade_process_free_on_exit(process, signers);
 
-    const int errcode = register_multisig(multisig_name, network_id, script_variant, sorted, threshold, signers,
-        num_signers, master_blinding_key, master_blinding_key_len, &errmsg);
+    const int errcode
+        = register_multisig(multisig_name, network_id, script_variant, sorted, threshold, signers, num_signers, &errmsg);
     if (errcode) {
         jade_process_reject_message(process, errcode, errmsg);
         goto cleanup;

@@ -8,6 +8,10 @@ under the **GPL-3** (see [LICENSE](./LICENSE)).
 Ruby is not affiliated with or endorsed by Blockstream, and it can not run on retail Blockstream Jade units
 (they only accept firmware signed by Blockstream).
 
+**Ruby is Bitcoin only.** The Liquid / Elements support of Jade (Liquid networks, confidential
+transactions and addresses, blinding keys, asset registry, PSET) has been removed, and libwally is
+built without Elements.
+
 Ruby tracks upstream Jade so that its security fixes can be merged: see [UPSTREAM.md](./UPSTREAM.md).
 
 The original Jade documentation follows.

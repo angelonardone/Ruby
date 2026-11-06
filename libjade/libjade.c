@@ -44,8 +44,6 @@
 #include "managed_components/espressif__cbor/tinycbor/src/cborpretty.c"
 #include "managed_components/espressif__cbor/tinycbor/src/cborpretty_stdio.c"
 #include "managed_components/espressif__cbor/tinycbor/src/cbortojson.c"
-// Include the asset snapshot component sources
-#include "components/assets/assets_snapshot.c"
 // Include the miniz compression code.
 // This is a manually shortened version of the amalgamation from
 // https://github.com/richgel999/miniz with a couple of additional

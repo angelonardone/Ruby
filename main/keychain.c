@@ -13,7 +13,7 @@
 #include <sodium/crypto_verify_32.h>
 #include <string.h>
 #include <wally_bip39.h>
-#include <wally_elements.h>
+#include <wally_symmetric.h>
 
 // Size of keydata_t elements - ext-key, ga-path, master-blinding-key
 #define SERIALIZED_KEY_LEN (BIP32_SERIALIZED_LEN + HMAC_SHA512_LEN + HMAC_SHA512_LEN)
@@ -136,17 +136,6 @@ passphrase_type_t keychain_get_passphrase_type(void)
 {
     return (key_flags & KEY_FLAGS_WORDLIST_PASSPHRASE) ? PASSPHRASE_WORDLIST : PASSPHRASE_FREETEXT;
 }
-
-void keychain_set_confirm_export_blinding_key(const bool confirm_export)
-{
-    if (confirm_export) {
-        key_flags |= KEY_FLAGS_CONFIRM_EXPORT_BLINDING_KEY;
-    } else {
-        key_flags &= ~KEY_FLAGS_CONFIRM_EXPORT_BLINDING_KEY;
-    }
-}
-
-bool keychain_get_confirm_export_blinding_key(void) { return (key_flags & KEY_FLAGS_CONFIRM_EXPORT_BLINDING_KEY); }
 
 void keychain_persist_key_flags(void)
 {
@@ -301,10 +290,18 @@ void keychain_derive_from_seed(const uint8_t* seed, const size_t seed_len, keych
     // (eg. in get_xpub call).
     JADE_WALLY_VERIFY(bip32_key_from_seed(seed, seed_len, BIP32_VER_MAIN_PRIVATE, 0, &keydata->xpriv));
 
-    // NOTE: 'master_unblinding_key' is stored here as the full output of hmac512, when according to slip-0077
-    // the master unblinding key is only the second half of that - ie. 256 bits.
-    JADE_WALLY_VERIFY(
-        wally_asset_blinding_key_from_seed(seed, seed_len, keydata->master_unblinding_key, HMAC_SHA512_LEN));
+    // NOTE: 'master_unblinding_key' is the SLIP-0077 master key (full output of hmac512).
+    // Ruby has no Liquid support, but this key is kept (computed exactly as upstream Jade, with
+    // the non-Elements symmetric key functions) as it seeds the BIP85-RSA key generation (see rsa.c).
+    {
+        static const unsigned char SLIP77_LABEL[] = { 'S', 'L', 'I', 'P', '-', '0', '0', '7', '7' };
+        uint8_t root[HMAC_SHA512_LEN];
+        SENSITIVE_PUSH(root, sizeof(root));
+        JADE_WALLY_VERIFY(wally_symmetric_key_from_seed(seed, seed_len, root, sizeof(root)));
+        JADE_WALLY_VERIFY(wally_symmetric_key_from_parent(root, sizeof(root), 0, SLIP77_LABEL, sizeof(SLIP77_LABEL),
+            keydata->master_unblinding_key, HMAC_SHA512_LEN));
+        SENSITIVE_POP(root);
+    }
 
     // Compute and cache the path the GA server will use to sign
     JADE_ASSERT(wallet_calculate_gaservice_path(&keydata->xpriv, keydata->gaservice_path, GASERVICE_PATH_LEN));

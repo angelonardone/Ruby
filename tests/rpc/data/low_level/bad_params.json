@@ -1140,7 +1140,7 @@
           }
         }
       ],
-      "Invalid blinding key"
+      "Liquid blinding keys are not supported"
     ],
     [
       [
@@ -1183,7 +1183,7 @@
           }
         }
       ],
-      "Invalid blinding key"
+      "Liquid blinding keys are not supported"
     ],
     [
       [
@@ -1226,7 +1226,7 @@
           }
         }
       ],
-      "Invalid blinding key"
+      "Liquid blinding keys are not supported"
     ],
     [
       [
@@ -3253,28 +3253,6 @@
     ],
     [
       [
-        "badsigntx13",
-        "sign_tx",
-        {
-          "network": "localtest-liquid",
-          "txn": "0x02000000010f757ae0b5714cb36e017dfffafe5f3ba8c89ddb969a0ae60d99ee7b5892a2740000000000ffffffff01203f0f00000000001600145f4fcd4a757c2abf6a0691f59dffae18852bbd7300000000",
-          "num_inputs": 1,
-          "change": [
-            {
-              "path": [
-                1,
-                2,
-                3
-              ]
-            },
-            {}
-          ]
-        }
-      ],
-      "not appropriate for liquid"
-    ],
-    [
-      [
         "badsigntx14",
         "sign_tx",
         {
@@ -3404,24 +3382,6 @@
   "TEST_THEIR_PK": "0x03e7cd9230b30bf53753a43add0e88931bac3be21baa4c6465d9f8da9251f2904c",
   "TEST_HASH_PREVOUTS": "0x95f17695f6329dbcce2aa0b7f1eaff823b19d64d8737d642d6e6147f5ec88342",
   "TEST_REGTEST_BITCOIN": "0x5ac9f65c0efcc4775e0baec4ec03abdde22473cd3cf33c0419ca290e0751b225",
-  "EXPECTED_MASTER_BLINDING_KEY": "0xafacc503637e85da661ca1706c4ea147f1407868c48d8f92dd339ac272293cdc",
-  "EXPECTED_BLINDING_KEY": "0x023454c233497be73ed98c07d5e9069e21519e94d0663375ca57c982037546e352",
-  "EXPECTED_LIQ_COMMITMENT_1": {
-    "abf": "0x42bc9c7025f3df490a208cb362ff220547910da1d3e81c63a6e7c28c3a33a993",
-    "vbf": "0x7a6693fde7b88efb8375db618670fb5ccb9b2f7e8743b7d772924f0426c5efe6",
-    "asset_generator": "0x0a5cf0a43ad404163946c28b8a36d0e5cb4895b0ee386da4cd1008ffc8cb464501",
-    "value_commitment": "0x082d8de9b7f66994abf789b2591738331f88a7ddbef4e553bbf123e47677d60099",
-    "asset_id": "0x5ac9f65c0efcc4775e0baec4ec03abdde22473cd3cf33c0419ca290e0751b225",
-    "value": 9000000
-  },
-  "EXPECTED_LIQ_COMMITMENT_2": {
-    "abf": "0xa3510210bbab6ed67429af9beaf42f09382e12146a3db466971b58a45516bba0",
-    "vbf": "0x6ec064a68075a278bfca4a10f777c730116e9ba02fbb343a237c847e4d2fbf53",
-    "asset_generator": "0x0abd23178d9ff73cf848d8d88a7c7e269a464f53017cab0f9f53ed9d64b2849713",
-    "value_commitment": "0x094d9a00f1661a2a805a8afec9c188310d4c43353cc319886ee4d9f439389d8f43",
-    "asset_id": "0x5ac9f65c0efcc4775e0baec4ec03abdde22473cd3cf33c0419ca290e0751b225",
-    "value": 9000000
-  },
   "bad_tx_inputs": [
     [
       [

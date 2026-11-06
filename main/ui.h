@@ -1,7 +1,6 @@
 #ifndef UI_H_
 #define UI_H_
 
-#include "assets.h"
 #include "gui.h"
 
 struct wally_tx;
@@ -89,16 +88,10 @@ typedef struct {
 // Whether QR Frame Guides (box corners) should be shown
 typedef enum { QR_GUIDE_HIDE, QR_GUIDE_SHOW } qr_guide_type_t;
 
-// Output is confidential/blinded
-#define OUTPUT_FLAG_CONFIDENTIAL (1 << 0)
-// Output has a blinding public key
-#define OUTPUT_FLAG_HAS_BLINDING_KEY (1 << 1)
 // Output is ours (belongs to a wallet controlled by this Jade)
 #define OUTPUT_FLAG_IS_OURS (1 << 2)
 // Output is a change output for this wallet (only set with OUTPUT_FLAG_IS_OURS)
 #define OUTPUT_FLAG_CHANGE (1 << 3)
-// Output has unblinded asset and value
-#define OUTPUT_FLAG_HAS_UNBLINDED (1 << 4)
 
 // Progress bar
 typedef struct {

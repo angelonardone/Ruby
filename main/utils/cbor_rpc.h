@@ -8,7 +8,6 @@
 #include <stdint.h>
 #include <wally_bip32.h>
 #include <wally_crypto.h>
-#include <wally_elements.h>
 
 // RPC error codes
 #define CBOR_RPC_INVALID_REQUEST -32600

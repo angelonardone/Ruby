@@ -10,9 +10,6 @@
 #include <wally_map.h>
 #include <wally_transaction.h>
 
-// Blinding factors
-typedef enum { BF_ASSET, BF_VALUE, BF_ASSET_VALUE } BlindingFactorType_t;
-
 // Input/Output data for signing a tx input
 typedef struct {
     uint8_t signature_hash[SHA256_LEN]; // Input: The signature hash to sign
@@ -27,15 +24,14 @@ typedef struct {
 } input_data_t;
 
 // Input/Output data for signing a tx
-// segwit v1: All "amounts"/"assets" must be populated, and "scriptpubkeys"
+// segwit v1: All "amounts" must be populated, and "scriptpubkeys"
 //     must have an entry for each item in "inputs".
-// Otherwise: "amounts"/"assets" must contain an amount for the index
+// Otherwise: "amounts" must contain an amount for the index
 //     being signed, and "scriptpubkeys" is unused.
 typedef struct {
     input_data_t* inputs;
     size_t num_inputs;
     struct wally_map amounts;
-    struct wally_map assets;
     struct wally_map scriptpubkeys;
     struct wally_map cache;
 } signing_data_t;
@@ -138,8 +134,8 @@ signing_data_t* signing_data_allocate(const size_t num_inputs);
 void signing_data_free(void* signing_data);
 
 // Get the signature hash for the "index"-th input of "tx".
-WARN_UNUSED_RESULT bool wallet_get_tx_input_hash(struct wally_tx* tx, size_t index, signing_data_t* signing_data,
-    const uint8_t* script, size_t script_len, const uint8_t* genesis, const size_t genesis_len);
+WARN_UNUSED_RESULT bool wallet_get_tx_input_hash(
+    struct wally_tx* tx, size_t index, signing_data_t* signing_data, const uint8_t* script, size_t script_len);
 WARN_UNUSED_RESULT bool wallet_get_signer_commitment(const uint8_t* signature_hash, size_t signature_hash_len,
     const uint32_t* path, size_t path_len, const uint8_t* commitment, size_t commitment_len, uint8_t* output,
     size_t output_len);
@@ -149,14 +145,5 @@ WARN_UNUSED_RESULT bool wallet_sign_tx_input_hash(
 
 WARN_UNUSED_RESULT bool wallet_hmac_with_master_key(
     const uint8_t* data, size_t data_len, uint8_t* output, size_t output_len);
-WARN_UNUSED_RESULT bool wallet_get_public_blinding_key(const uint8_t* master_blinding_key,
-    size_t master_blinding_key_len, const uint8_t* script, size_t script_len, uint8_t* output, size_t output_len);
-WARN_UNUSED_RESULT bool wallet_get_shared_blinding_nonce(const uint8_t* master_blinding_key,
-    size_t master_blinding_key_len, const uint8_t* script, size_t script_len, const uint8_t* their_pubkey,
-    size_t their_pubkey_len, uint8_t* output_nonce, size_t output_nonce_len, uint8_t* output_pubkey,
-    size_t output_pubkey_len);
-WARN_UNUSED_RESULT bool wallet_get_blinding_factor(const uint8_t* master_blinding_key, size_t master_blinding_key_len,
-    const uint8_t* hash_prevouts, size_t hash_len, uint32_t output_index, BlindingFactorType_t type, uint8_t* output,
-    size_t output_len);
 
 #endif /* WALLET_H_ */

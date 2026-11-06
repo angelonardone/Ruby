@@ -20,7 +20,6 @@
 #include <wally_bip85.h>
 #include <wally_core.h>
 #include <wally_crypto.h>
-#include <wally_elements.h>
 #include <wally_script.h>
 #include <wally_transaction.h>
 
@@ -40,7 +39,6 @@ static const uint32_t MAX_PATH_PTR = 10000;
 
 static const uint32_t BIP44_COIN_BTC = BIP32_INITIAL_HARDENED_CHILD;
 static const uint32_t BIP44_COIN_TEST = BIP32_INITIAL_HARDENED_CHILD + 1;
-static const uint32_t BIP44_COIN_LBTC = BIP32_INITIAL_HARDENED_CHILD + 1776;
 static const uint32_t BIP44_PURPOSE = BIP32_INITIAL_HARDENED_CHILD + 44;
 static const uint32_t BIP45_PURPOSE = BIP32_INITIAL_HARDENED_CHILD + 45;
 static const uint32_t BIP48_PURPOSE = BIP32_INITIAL_HARDENED_CHILD + 48;
@@ -69,7 +67,7 @@ static const uint32_t MAX_CSV_BLOCKS_ALLOWED = 65535;
 #define CSV_MIN_SCRIPT_LEN (9 + (2 * (EC_PUBLIC_KEY_LEN + 1)) + 1 + 1)
 #define CSV_MAX_SCRIPT_LEN (9 + (2 * (EC_PUBLIC_KEY_LEN + 1)) + 1 + 3)
 
-// BTC (rather, non-liquid) uses an optimised, mini-script compatible csv script which is slightly shorter
+// BTC uses an optimised, mini-script compatible csv script which is slightly shorter
 #define CSV_MIN_SCRIPT_LEN_OPT (6 + (2 * (EC_PUBLIC_KEY_LEN + 1)) + 1 + 1)
 #define CSV_MAX_SCRIPT_LEN_OPT (6 + (2 * (EC_PUBLIC_KEY_LEN + 1)) + 1 + 3)
 
@@ -77,15 +75,9 @@ static const char MAINNET_SERVICE_XPUB[]
     = "xpub661MyMwAqRbcGsMS1UQfLrVW52iFHhKd1WbL4BVBZt8xz8pE6oyz6La2LscN2WADtpZZXwKo4DXMbzUdxVsLYxm7f6instfCnpB3cFdbi2F";
 static const char TESTNET_SERVICE_XPUB[]
     = "tpubD6NzVbkrYhZ4Y9k7T65kw2Sx9z67CzZr2Hi7w2pkKutUvm25ryvL79PqQTtDvAaYacd4z5NQTMmdJ37t8VbMVZbDY1z2rqUKLRNpVW6rGC3";
-static const char LIQUID_SERVICE_XPUB[]
-    = "xpub661MyMwAqRbcEZr3uYPEEP4X2bRmYXmxrcLMH8YEwLAFxonVGqstpNywBvwkUDCEZA1cd6fsLgKvb6iZP5yUtLc3G3L8WynChNJznHLaVrA";
-static const char TESTNETLIQUID_SERVICE_XPUB[]
-    = "tpubD6NzVbkrYhZ4YKB74cMgKEpwByD7UWLXt2MxRdwwaQtgrw6E3YPQgSRkaxMWnpDXKtX5LvRmY5mT8FkzCtJcEQ1YhN1o8CU2S5gy9TDFc24";
 
 struct ext_key MAINNET_SERVICE;
 struct ext_key TESTNET_SERVICE;
-struct ext_key LIQUID_SERVICE;
-struct ext_key TESTNETLIQUID_SERVICE;
 
 // network id to relevant GA service key
 static struct ext_key* network_to_ga_service(const network_t network_id)
@@ -93,14 +85,9 @@ static struct ext_key* network_to_ga_service(const network_t network_id)
     switch (network_id) {
     case NETWORK_BITCOIN:
         return &MAINNET_SERVICE;
-    case NETWORK_LIQUID:
-        return &LIQUID_SERVICE;
     case NETWORK_BITCOIN_TESTNET:
     case NETWORK_BITCOIN_REGTEST:
-    case NETWORK_LIQUID_REGTEST: // localtest-liquid uses the regtest/testnet key
         return &TESTNET_SERVICE;
-    case NETWORK_LIQUID_TESTNET:
-        return &TESTNETLIQUID_SERVICE;
     case NETWORK_NONE:
         break;
     }
@@ -112,8 +99,6 @@ void wallet_init(void)
 {
     JADE_WALLY_VERIFY(bip32_key_from_base58(MAINNET_SERVICE_XPUB, &MAINNET_SERVICE));
     JADE_WALLY_VERIFY(bip32_key_from_base58(TESTNET_SERVICE_XPUB, &TESTNET_SERVICE));
-    JADE_WALLY_VERIFY(bip32_key_from_base58(LIQUID_SERVICE_XPUB, &LIQUID_SERVICE));
-    JADE_WALLY_VERIFY(bip32_key_from_base58(TESTNETLIQUID_SERVICE_XPUB, &TESTNETLIQUID_SERVICE));
 }
 
 // Outputs eg. "m/a'/b'/c/d" - ie. uses m/ as master, and ' as hardened indicator
@@ -377,7 +362,6 @@ void wallet_get_default_xpub_export_path(
     }
 
     // 'Coin-type' depends on network
-    // FIXME: Handle liquid
     path[1] = keychain_get_network_type_restriction() == NETWORK_TYPE_TEST ? BIP44_COIN_TEST : BIP44_COIN_BTC;
 
     // 'Account' is as passed in
@@ -417,12 +401,8 @@ static uint32_t get_bip44_coin_type(const network_t network_id)
     switch (network_id) {
     case NETWORK_BITCOIN:
         return BIP44_COIN_BTC;
-    case NETWORK_LIQUID:
-        return BIP44_COIN_LBTC;
     case NETWORK_BITCOIN_TESTNET:
-    case NETWORK_LIQUID_TESTNET:
     case NETWORK_BITCOIN_REGTEST:
-    case NETWORK_LIQUID_REGTEST:
         return BIP44_COIN_TEST;
     case NETWORK_NONE:
         break;
@@ -786,19 +766,11 @@ static void wallet_build_csv(const network_t network_id, const uint8_t* pubkeys,
     JADE_ASSERT(written);
 
     // Create 2of2 CSV multisig script (2of3-csv not supported)
-    if (network_is_liquid(network_id)) {
-        // NOTE: we use the original (un-optimised) csv script for liquid
-        JADE_LOGI("Generating liquid csv script");
-        JADE_WALLY_VERIFY(wally_scriptpubkey_csv_2of2_then_1_from_bytes(
-            pubkeys, pubkeys_len, blocks, 0, output, output_len, written));
-        JADE_ASSERT(*written >= CSV_MIN_SCRIPT_LEN && *written <= CSV_MAX_SCRIPT_LEN);
-    } else {
-        // NOTE: we use the 'new-improved!' optimised, miniscript-compatible csv script for btc
-        JADE_LOGI("Generating optimised csv script");
-        JADE_WALLY_VERIFY(wally_scriptpubkey_csv_2of2_then_1_from_bytes_opt(
-            pubkeys, pubkeys_len, blocks, 0, output, output_len, written));
-        JADE_ASSERT(*written >= CSV_MIN_SCRIPT_LEN_OPT && *written <= CSV_MAX_SCRIPT_LEN_OPT);
-    }
+    // NOTE: we use the 'new-improved!' optimised, miniscript-compatible csv script for btc
+    JADE_LOGI("Generating optimised csv script");
+    JADE_WALLY_VERIFY(wally_scriptpubkey_csv_2of2_then_1_from_bytes_opt(
+        pubkeys, pubkeys_len, blocks, 0, output, output_len, written));
+    JADE_ASSERT(*written >= CSV_MIN_SCRIPT_LEN_OPT && *written <= CSV_MAX_SCRIPT_LEN_OPT);
 }
 
 // Function to build a green-address script - 2of2 or 2of3 multisig, or a 2of2 csv
@@ -937,11 +909,9 @@ bool wallet_build_singlesig_script(const network_t network_id, const script_vari
             wally_scriptpubkey_p2pkh_from_bytes(pubkey, pubkey_len, WALLY_SCRIPT_HASH160, output, output_len, written));
     } else if (script_variant == P2TR) {
         // Get a p2tr script-pubkey for the passed pubkey.
-        // Wally will tweak the pubkey for us according to BIP-341,
-        // note the tweak for Liquid is different hence using flags below.
+        // Wally will tweak the pubkey for us according to BIP-341.
         JADE_LOGD("Generating singlesig p2tr script");
-        const uint32_t flags = network_is_liquid(network_id) ? EC_FLAG_ELEMENTS : 0;
-        JADE_WALLY_VERIFY(wally_scriptpubkey_p2tr_from_bytes(pubkey, pubkey_len, flags, output, output_len, written));
+        JADE_WALLY_VERIFY(wally_scriptpubkey_p2tr_from_bytes(pubkey, pubkey_len, 0, output, output_len, written));
     } else {
         JADE_ASSERT_MSG(false, "Unrecognised script variant: %u", script_variant);
         return false;
@@ -1186,7 +1156,7 @@ bool wallet_sign_tx_input_hash(const network_t network_id, input_data_t* input_d
         } else {
             // Taproot. Tweak the private key before Schnorr signing
             signing_key = tweaked;
-            flags = network_is_liquid(network_id) ? EC_FLAG_ELEMENTS : 0;
+            flags = 0;
             wret
                 = wally_ec_private_key_bip341_tweak(privkey, sizeof(privkey), NULL, 0, flags, tweaked, sizeof(tweaked));
             flags |= EC_FLAG_SCHNORR; // Update for signing below
@@ -1232,7 +1202,6 @@ signing_data_t* signing_data_allocate(const size_t num_inputs)
     p->inputs = JADE_CALLOC(num_inputs, sizeof(input_data_t));
     p->num_inputs = num_inputs;
     JADE_WALLY_VERIFY(wally_map_init(num_inputs, NULL, &p->amounts));
-    JADE_WALLY_VERIFY(wally_map_init(num_inputs, NULL, &p->assets));
     JADE_WALLY_VERIFY(wally_map_init(num_inputs, NULL, &p->scriptpubkeys));
     // FIXME: Use a wally constant for the cache size when it is exposed
     JADE_WALLY_VERIFY(wally_map_init(16, NULL, &p->cache));
@@ -1248,15 +1217,14 @@ void signing_data_free(void* signing_data)
         free(p->inputs);
     }
     wally_map_clear(&p->amounts);
-    wally_map_clear(&p->assets);
     wally_map_clear(&p->scriptpubkeys);
     wally_map_clear(&p->cache);
     free(p);
 }
 
 // Function to fetch a hash for signing a transaction input
-bool wallet_get_tx_input_hash(struct wally_tx* tx, const size_t index, signing_data_t* signing_data,
-    const uint8_t* script, size_t script_len, const uint8_t* genesis, const size_t genesis_len)
+bool wallet_get_tx_input_hash(
+    struct wally_tx* tx, const size_t index, signing_data_t* signing_data, const uint8_t* script, size_t script_len)
 {
     const uint32_t key_version = 0;
     const uint32_t codesep = WALLY_NO_CODESEPARATOR;
@@ -1267,9 +1235,9 @@ bool wallet_get_tx_input_hash(struct wally_tx* tx, const size_t index, signing_d
     JADE_ASSERT(signing_data);
     JADE_ASSERT(index < signing_data->num_inputs);
     input_data_t* const input_data = &signing_data->inputs[index];
-    wret = wally_tx_get_input_signature_hash(tx, index, &signing_data->scriptpubkeys, &signing_data->assets,
-        &signing_data->amounts, script, script_len, key_version, codesep, annex, annex_len, genesis, genesis_len,
-        input_data->sighash, input_data->sig_type, &signing_data->cache, input_data->signature_hash,
+    // Bitcoin only: no (Liquid) asset map or genesis blockhash
+    wret = wally_tx_get_input_signature_hash(tx, index, &signing_data->scriptpubkeys, NULL, &signing_data->amounts,
+        script, script_len, key_version, codesep, annex, annex_len, NULL, 0, input_data->sighash, input_data->sig_type, &signing_data->cache, input_data->signature_hash,
         sizeof(input_data->signature_hash));
 
     if (wret != WALLY_OK) {
@@ -1349,117 +1317,6 @@ bool wallet_hmac_with_master_key(const uint8_t* data, const size_t data_len, uin
     return wally_hmac_sha256(keychain_get()->xpriv.priv_key + 1, sizeof(keychain_get()->xpriv.priv_key) - 1, data,
                data_len, output, output_len)
         == WALLY_OK;
-}
-
-// Return script blinding privkey given master blinding key (slip-0077)
-static bool wallet_get_blinding_privkey(const uint8_t* master_blinding_key, const size_t master_blinding_key_len,
-    const uint8_t* script, const size_t script_len, uint8_t* output, const size_t output_len)
-{
-    JADE_ASSERT(master_blinding_key);
-    JADE_ASSERT(master_blinding_key_len == HMAC_SHA512_LEN);
-    JADE_ASSERT(script);
-    JADE_ASSERT(script_len);
-    JADE_ASSERT(output);
-    JADE_ASSERT(output_len == EC_PRIVATE_KEY_LEN);
-
-    // NOTE: 'master_unblinding_key' passed here as the full output of hmac512, when according to slip-0077
-    // the master unblinding key is only the second half of that - ie. 256 bits
-    // 'wally_asset_blinding_key_to_ec_private_key()' takes this into account...
-    const int wret = wally_asset_blinding_key_to_ec_private_key(
-        master_blinding_key, master_blinding_key_len, script, script_len, output, output_len);
-    if (wret != WALLY_OK) {
-        JADE_LOGE("Error building asset blinding key for script: %d", wret);
-        return false;
-    }
-    return true;
-}
-
-bool wallet_get_public_blinding_key(const uint8_t* master_blinding_key, const size_t master_blinding_key_len,
-    const uint8_t* script, const size_t script_len, uint8_t* output, const size_t output_len)
-{
-    if (!master_blinding_key || master_blinding_key_len != HMAC_SHA512_LEN || !script || !script_len || !output
-        || output_len != EC_PUBLIC_KEY_LEN) {
-        return false;
-    }
-
-    uint8_t privkey[EC_PRIVATE_KEY_LEN];
-    SENSITIVE_PUSH(privkey, sizeof(privkey));
-    const bool ret = wallet_get_blinding_privkey(
-        master_blinding_key, master_blinding_key_len, script, script_len, privkey, sizeof(privkey));
-    if (ret) {
-        JADE_WALLY_VERIFY(wally_ec_public_key_from_private_key(privkey, sizeof(privkey), output, output_len));
-    }
-    SENSITIVE_POP(privkey);
-    return ret;
-}
-
-bool wallet_get_blinding_factor(const uint8_t* master_blinding_key, const size_t master_blinding_key_len,
-    const uint8_t* hash_prevouts, const size_t hash_len, const uint32_t output_index, const BlindingFactorType_t type,
-    uint8_t* output, const size_t output_len)
-{
-    if (!master_blinding_key || master_blinding_key_len != HMAC_SHA512_LEN || !hash_prevouts || hash_len != SHA256_LEN
-        || !output) {
-        return false;
-    }
-
-    // Map to appropriate wally function
-    typedef int (*fn_get_blinding_factor_t)(const uint8_t*, size_t, const uint8_t*, size_t, uint32_t, uint8_t*, size_t);
-    fn_get_blinding_factor_t get_blinding_factor = NULL;
-    if (type == BF_ASSET && output_len == BLINDING_FACTOR_LEN) {
-        get_blinding_factor = wally_asset_blinding_key_to_abf;
-    } else if (type == BF_VALUE && output_len == BLINDING_FACTOR_LEN) {
-        get_blinding_factor = wally_asset_blinding_key_to_vbf;
-    } else if (type == BF_ASSET_VALUE && output_len == WALLY_ABF_VBF_LEN) {
-        get_blinding_factor = wally_asset_blinding_key_to_abf_vbf;
-    } else {
-        return false;
-    }
-
-    // Get the blinding factor(s)
-    JADE_ASSERT(get_blinding_factor);
-    JADE_WALLY_VERIFY(get_blinding_factor(
-        master_blinding_key, master_blinding_key_len, hash_prevouts, hash_len, output_index, output, output_len));
-
-    return true;
-}
-
-// Compute the shared blinding nonce - ie. sha256(ecdh(our_privkey, their_pubkey))
-bool wallet_get_shared_blinding_nonce(const uint8_t* master_blinding_key, const size_t master_blinding_key_len,
-    const uint8_t* script, const size_t script_len, const uint8_t* their_pubkey, const size_t their_pubkey_len,
-    uint8_t* output_nonce, const size_t output_nonce_len, uint8_t* output_pubkey, const size_t output_pubkey_len)
-{
-    if (!master_blinding_key || master_blinding_key_len != HMAC_SHA512_LEN || !script || !script_len || !their_pubkey
-        || !output_nonce || output_nonce_len != SHA256_LEN) {
-        return false;
-    }
-    if ((output_pubkey && output_pubkey_len != EC_PUBLIC_KEY_LEN) || (!output_pubkey && output_pubkey_len != 0)) {
-        return false;
-    }
-
-    uint8_t privkey[EC_PRIVATE_KEY_LEN];
-    SENSITIVE_PUSH(privkey, sizeof(privkey));
-    if (!wallet_get_blinding_privkey(
-            master_blinding_key, master_blinding_key_len, script, script_len, privkey, sizeof(privkey))) {
-        SENSITIVE_POP(privkey);
-        return false;
-    }
-
-    const int wret = wally_ecdh_nonce_hash(
-        their_pubkey, their_pubkey_len, privkey, sizeof(privkey), output_nonce, output_nonce_len);
-    if (wret != WALLY_OK) {
-        JADE_LOGE("Error building ecdh nonce hash: %d", wret);
-        SENSITIVE_POP(privkey);
-        return false;
-    }
-
-    // Caller may also want our public blinding key
-    if (output_pubkey) {
-        JADE_WALLY_VERIFY(
-            wally_ec_public_key_from_private_key(privkey, sizeof(privkey), output_pubkey, output_pubkey_len));
-    }
-
-    SENSITIVE_POP(privkey);
-    return true;
 }
 
 bool wallet_get_message_hash(const uint8_t* bytes, const size_t bytes_len, uint8_t* output, const size_t output_len)

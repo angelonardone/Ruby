@@ -45,18 +45,13 @@ void reply_registered_multisig(const void* ctx, CborEncoder* container)
         JADE_ASSERT(cberr == CborNoError);
 
         CborEncoder entry_encoder;
-        cberr = cbor_encoder_create_map(&root_encoder, &entry_encoder, 5);
+        cberr = cbor_encoder_create_map(&root_encoder, &entry_encoder, 4);
         JADE_ASSERT(cberr == CborNoError);
 
         const char* variant = get_script_variant_string(multisig_data->variant);
         add_string_to_map(&entry_encoder, "variant", variant ? variant : "");
         add_boolean_to_map(&entry_encoder, "sorted", multisig_data->sorted);
         add_uint_to_map(&entry_encoder, "threshold", multisig_data->threshold);
-
-        JADE_ASSERT(!multisig_data->master_blinding_key_len
-            || multisig_data->master_blinding_key_len == sizeof(multisig_data->master_blinding_key));
-        add_bytes_to_map(&entry_encoder, "master_blinding_key", multisig_data->master_blinding_key,
-            multisig_data->master_blinding_key_len);
 
         // Signer details
         cberr = cbor_encode_text_stringz(&entry_encoder, "signers");

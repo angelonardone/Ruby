@@ -16,8 +16,7 @@ def _check_multisig_registration(jade, multisig_data):
                                   descriptor['variant'],
                                   descriptor['sorted'],
                                   descriptor['threshold'],
-                                  descriptor['signers'],
-                                  master_blinding_key=descriptor.get('master_blinding_key'))
+                                  descriptor['signers'])
     assert rslt is True
 
     # Pull the data back, then reload (roundtrip) - should be a no-op
@@ -26,12 +25,10 @@ def _check_multisig_registration(jade, multisig_data):
     assert fetched['variant'] == descriptor['variant']
     assert fetched['sorted'] == descriptor['sorted']
     assert fetched['threshold'] == descriptor['threshold']
-    assert fetched['master_blinding_key'] == descriptor.get('master_blinding_key', b'')
+    assert 'master_blinding_key' not in fetched  # Ruby: no Liquid blinding keys
     assert fetched['signers'] == descriptor['signers']
 
     roundtrip['network'] = inputdata['network']  # the only item not roundtripped
-    if not fetched['master_blinding_key']:
-        del fetched['master_blinding_key']  # don't send null/empty blinding key
 
     rslt = jade._jadeRpc('register_multisig', roundtrip)  # push result structure back
     assert rslt
@@ -44,7 +41,6 @@ def _check_multisig_registration(jade, multisig_data):
     assert multisig_desc['sorted'] == descriptor['sorted']
     assert multisig_desc['threshold'] == descriptor['threshold']
     assert multisig_desc['num_signers'] == len(descriptor['signers'])
-    assert multisig_desc['master_blinding_key'] == descriptor.get('master_blinding_key', b'')
 
     # This includes 'get receive address' tests ...
     for addr_test in multisig_data['address_tests']:
@@ -52,43 +48,6 @@ def _check_multisig_registration(jade, multisig_data):
                                         addr_test['paths'],
                                         multisig_name=inputdata['multisig_name'])
         assert rslt == addr_test['expected_address']
-
-    # ... and maybe blinding key tests ...
-    for blinding_test in multisig_data.get('blinding_key_tests', []):
-        rslt = jade.get_blinding_key(blinding_test['script'],
-                                     multisig_name=inputdata['multisig_name'])
-        assert rslt == blinding_test['expected_blinding_key']
-
-        rslt = jade.get_shared_nonce(blinding_test['script'],
-                                     blinding_test['their_pubkey'],
-                                     multisig_name=inputdata['multisig_name'])
-        assert rslt == blinding_test['expected_shared_nonce']
-
-        rslt = jade.get_shared_nonce(blinding_test['script'],
-                                     blinding_test['their_pubkey'],
-                                     include_pubkey=True,
-                                     multisig_name=inputdata['multisig_name'])
-        assert rslt['blinding_key'] == blinding_test['expected_blinding_key']
-        assert rslt['shared_nonce'] == blinding_test['expected_shared_nonce']
-
-    # ... and blinding/commitments tests!
-    for blinding_test in multisig_data.get('commitments_tests', []):
-        for bf_type, rslt_key in [('ASSET', 'abf'), ('VALUE', 'vbf')]:
-            rslt = jade.get_blinding_factor(blinding_test['hash_prevouts'],
-                                            blinding_test['output_index'],
-                                            bf_type,
-                                            multisig_name=inputdata['multisig_name'])
-            assert rslt == blinding_test[rslt_key]
-
-        rslt = jade.get_commitments(blinding_test['asset_id'],
-                                    blinding_test['value'],
-                                    blinding_test['hash_prevouts'],
-                                    blinding_test['output_index'],
-                                    multisig_name=inputdata['multisig_name'])
-        assert rslt['abf'] == blinding_test['abf']
-        assert rslt['vbf'] == blinding_test['vbf']
-        assert rslt['asset_generator'] == blinding_test['asset_generator']
-        assert rslt['value_commitment'] == blinding_test['value_commitment']
 
 
 @with_test_cases('tests/rpc/data/multisig/multisig_reg_*.json')
@@ -107,8 +66,7 @@ def test_generic_multisig_registration(jade, test_case):
                                       descriptor['variant'],
                                       descriptor['sorted'],
                                       descriptor['threshold'],
-                                      descriptor['signers'],
-                                      master_blinding_key=descriptor.get('master_blinding_key'))
+                                      descriptor['signers'])
         assert rslt
 
 
@@ -134,7 +92,6 @@ def test_generic_multisig_files(jade, test_case):
     assert fetched['variant'] == expected_result['variant']
     assert fetched['sorted'] == expected_result['sorted']
     assert fetched['threshold'] == expected_result['threshold']
-    assert fetched['master_blinding_key'] == expected_result.get('master_blinding_key', b'')
     assert len(fetched['signers']) == expected_result['num_signers']
 
     registered_multisigs = jade.get_registered_multisigs()
@@ -144,8 +101,6 @@ def test_generic_multisig_files(jade, test_case):
     assert multisig_desc['variant'] == expected_result['variant']
     assert multisig_desc['threshold'] == expected_result['threshold']
     assert multisig_desc['num_signers'] == expected_result['num_signers']
-    assert multisig_desc['master_blinding_key'] == \
-        expected_result.get('master_blinding_key', b'')
 
 
 @with_test_cases('tests/rpc/data/multisig/multisig_bad_file_*.json')
@@ -180,8 +135,7 @@ def test_generic_multisig_matches_ga_addresses(jade, test_case):
                                   descriptor['variant'],
                                   descriptor['sorted'],
                                   descriptor['threshold'],
-                                  descriptor['signers'],
-                                  master_blinding_key=descriptor.get('master_blinding_key'))
+                                  descriptor['signers'])
     assert rslt is True
 
     # Check this test looks good - ie. 2of2 or 2of3
@@ -215,39 +169,6 @@ def test_generic_multisig_matches_ga_addresses(jade, test_case):
                                         recovery_xpub=recovery_xpub)
         assert rslt == addr_test['expected_address']
 
-    # ... and maybe blinding key tests ...
-    for blinding_test in test_case.get('blinding_key_tests', []):
-        rslt = jade.get_blinding_key(blinding_test['script'])
-        assert rslt == blinding_test['expected_blinding_key']
-
-        rslt = jade.get_shared_nonce(blinding_test['script'],
-                                     blinding_test['their_pubkey'])
-        assert rslt == blinding_test['expected_shared_nonce']
-
-        rslt = jade.get_shared_nonce(blinding_test['script'],
-                                     blinding_test['their_pubkey'],
-                                     include_pubkey=True)
-        assert rslt['blinding_key'] == blinding_test['expected_blinding_key']
-        assert rslt['shared_nonce'] == blinding_test['expected_shared_nonce']
-
-    # ... and blinding/commitments tests!
-    for blinding_test in test_case.get('commitments_tests', []):
-        for bf_type, rslt_key in [('ASSET', 'abf'), ('VALUE', 'vbf')]:
-            rslt = jade.get_blinding_factor(blinding_test['hash_prevouts'],
-                                            blinding_test['output_index'],
-                                            bf_type)
-            assert rslt == blinding_test[rslt_key]
-
-        rslt = jade.get_commitments(blinding_test['asset_id'],
-                                    blinding_test['value'],
-                                    blinding_test['hash_prevouts'],
-                                    blinding_test['output_index'],
-                                    multisig_name=inputdata['multisig_name'])
-        assert rslt['abf'] == blinding_test['abf']
-        assert rslt['vbf'] == blinding_test['vbf']
-        assert rslt['asset_generator'] == blinding_test['asset_generator']
-        assert rslt['value_commitment'] == blinding_test['value_commitment']
-
 
 @with_test_cases('tests/rpc/data/multisig/multisig_reg_matches_ga_2of2.json')
 def test_generic_multisig_matches_ga_signatures(jade, test_case):
@@ -259,8 +180,7 @@ def test_generic_multisig_matches_ga_signatures(jade, test_case):
                                   descriptor['variant'],
                                   descriptor['sorted'],
                                   descriptor['threshold'],
-                                  descriptor['signers'],
-                                  master_blinding_key=descriptor.get('master_blinding_key'))
+                                  descriptor['signers'])
     assert rslt
 
     ga_2of2_multisig_name = inputdata['multisig_name']
@@ -289,52 +209,6 @@ def test_generic_multisig_matches_ga_signatures(jade, test_case):
                             inputdata['change'],
                             use_ae_signatures,
                             use_legacy_flow)
-
-        # Check returned signatures
-        _check_tx_signatures(jade, ga_msig, rslt)
-
-
-@with_test_cases('tests/rpc/data/multisig/multisig_reg_liquid_matches_ga_2of2.json')
-def test_generic_multisig_matches_ga_signatures_liquid(jade, test_case):
-    """Sign liquid txns using generic multisig registration - should get same sigs as ga"""
-    inputdata = test_case['input']
-    descriptor = inputdata['descriptor']
-    rslt = jade.register_multisig(inputdata['network'],
-                                  inputdata['multisig_name'],
-                                  descriptor['variant'],
-                                  descriptor['sorted'],
-                                  descriptor['threshold'],
-                                  descriptor['signers'],
-                                  master_blinding_key=descriptor.get('master_blinding_key'))
-    assert rslt
-
-    ga_2of2_multisig_name = inputdata['multisig_name']
-    MULTISIG_SIGN_TXS = [
-                         'tests/rpc/data/multisig/liquid_txn_lowr_nochange.json',
-                         'tests/rpc/data/multisig/liquid_txn_noncsv.json'
-    ]
-    ga_2of2_multisig_txns = (list(_get_test_cases(testcase))[0][0]
-                             for testcase in MULTISIG_SIGN_TXS)
-    for ga_msig in ga_2of2_multisig_txns:
-        inputdata = ga_msig['input']
-
-        # Doctor the change paths to include the registered multisig name, but not
-        # the multisig xpub root (ie. to only contain the final 'ptr' part)
-        # (as the subact/branch is part of the multisig registration)
-        for change in inputdata['change'] or []:
-            if change is not None:
-                path = change.pop('path')
-                change['paths'] = [path[-1:]] * 2
-                change['multisig_name'] = ga_2of2_multisig_name
-
-        rslt = jade.sign_liquid_tx(inputdata['network'],
-                                   inputdata['txn'],
-                                   inputdata.get('inputs'),
-                                   inputdata['trusted_commitments'],
-                                   inputdata['change'],
-                                   inputdata.get('use_ae_signatures'),
-                                   inputdata.get('asset_info'),
-                                   inputdata.get('additional_info'))
 
         # Check returned signatures
         _check_tx_signatures(jade, ga_msig, rslt)

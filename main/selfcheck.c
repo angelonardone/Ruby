@@ -408,7 +408,7 @@ bool test_multisig_files(jade_process_t* process)
         FAIL();
     }
 
-    uint8_t registrationA[MULTISIG_BYTES_LEN(0, 3, 12)];
+    uint8_t registrationA[MULTISIG_BYTES_LEN(3, 12)];
     size_t reglenA = 0;
     if (!storage_get_multisig_registration(nameA, registrationA, sizeof(registrationA), &reglenA)) {
         FAIL();

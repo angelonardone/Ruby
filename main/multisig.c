@@ -10,7 +10,7 @@
 
 // 0 - 0.1.30 - variant, threshold, signers, hmac
 // 1 - 0.1.31 - include the 'sorted' flag
-// 2 - 0.1.34 - include any liquid master blinding key
+// 2 - 0.1.34 - include any liquid master blinding key (Ruby: length byte kept, always zero)
 // 3 - 1.0.22 - persist all metadata so can recreate original input
 static const uint8_t CURRENT_MULTISIG_RECORD_VERSION = 3;
 
@@ -19,18 +19,17 @@ static const uint8_t CURRENT_MULTISIG_RECORD_VERSION = 3;
 #define MIN_MULTISIG_BYTES_LEN (4 + 78 + 32)
 
 bool multisig_data_to_bytes(const script_variant_t variant, const bool sorted, const uint32_t threshold,
-    const uint8_t* master_blinding_key, const size_t master_blinding_key_len, const signer_t* signers,
-    const size_t num_signers, const size_t total_num_path_elements, uint8_t* output_bytes, const size_t output_len)
+    const signer_t* signers, const size_t num_signers, const size_t total_num_path_elements, uint8_t* output_bytes,
+    const size_t output_len)
 {
     JADE_ASSERT(threshold > 0);
-    JADE_ASSERT(IS_VALID_BLINDING_KEY(master_blinding_key, master_blinding_key_len));
     JADE_ASSERT(signers);
     JADE_ASSERT(num_signers >= threshold);
     JADE_ASSERT(num_signers <= MAX_ALLOWED_SIGNERS);
     JADE_STATIC_ASSERT(MAX_ALLOWED_SIGNERS <= 0xff); // Must fit in uint8_t
     JADE_ASSERT(total_num_path_elements <= num_signers * 2 * MAX_PATH_LEN);
     JADE_ASSERT(output_bytes);
-    JADE_ASSERT(output_len == MULTISIG_BYTES_LEN(master_blinding_key_len, num_signers, total_num_path_elements));
+    JADE_ASSERT(output_len == MULTISIG_BYTES_LEN(num_signers, total_num_path_elements));
 
     // Version byte
     uint8_t* write_ptr = output_bytes;
@@ -48,13 +47,8 @@ bool multisig_data_to_bytes(const script_variant_t variant, const bool sorted, c
     // Threshold
     *write_ptr++ = (uint8_t)threshold;
 
-    // Blinding key len, and data (new to version 2)
-    *write_ptr++ = (uint8_t)master_blinding_key_len;
-
-    if (master_blinding_key_len) {
-        memcpy(write_ptr, master_blinding_key, master_blinding_key_len);
-        write_ptr += master_blinding_key_len;
-    }
+    // Blinding key len (new to version 2) - Ruby: always zero, there are no Liquid blinding keys
+    *write_ptr++ = 0;
 
     // Num signers (new to version 3)
     JADE_ASSERT(num_signers <= MAX_ALLOWED_SIGNERS);
@@ -323,21 +317,14 @@ bool multisig_data_from_bytes(const uint8_t* bytes, const size_t bytes_len, mult
     output->threshold = *read_ptr;
     read_ptr += sizeof(uint8_t);
 
-    // Version 2 adds the 'blinding key' data, which otherwise defaults to null/none
-    output->master_blinding_key_len = 0;
+    // Version 2 adds a 'blinding key' length byte - Ruby has no Liquid support, so it must be zero
     if (version > 1) {
         const uint8_t keylen = *read_ptr;
         read_ptr += sizeof(keylen);
 
         if (keylen) {
-            if (keylen != sizeof(output->master_blinding_key)) {
-                JADE_LOGE("Unexpected blinding key length %d", keylen);
-                return false;
-            }
-
-            output->master_blinding_key_len = keylen;
-            memcpy(output->master_blinding_key, read_ptr, keylen);
-            read_ptr += keylen;
+            JADE_LOGE("Unsupported (Liquid) multisig record with blinding key");
+            return false;
         }
     }
 
@@ -389,8 +376,7 @@ bool multisig_load_from_storage(const char* multisig_name, multisig_data_t* outp
 
     // Sanity check data we are have loaded
     if (!is_multisig(output->variant) || output->threshold == 0 || output->threshold > output->num_xpubs
-        || !output->num_xpubs || output->num_xpubs > MAX_ALLOWED_SIGNERS
-        || (output->master_blinding_key_len && output->master_blinding_key_len != MULTISIG_MASTER_BLINDING_KEY_SIZE)) {
+        || !output->num_xpubs || output->num_xpubs > MAX_ALLOWED_SIGNERS) {
         *errmsg = "Multisig wallet data invalid";
         free(registration);
         return false;
@@ -490,27 +476,6 @@ bool multisig_get_pubkeys(const uint8_t* xpubs, const size_t num_xpubs, CborValu
         memcpy(dest, hdkey.pub_key, EC_PUBLIC_KEY_LEN);
     }
     *written = num_xpubs * EC_PUBLIC_KEY_LEN;
-
-    return true;
-}
-
-bool multisig_get_master_blinding_key(const multisig_data_t* multisig_data, uint8_t* master_blinding_key,
-    const size_t master_blinding_key_len, const char** errmsg)
-{
-    JADE_ASSERT(multisig_data);
-    JADE_ASSERT(master_blinding_key);
-    JADE_ASSERT(master_blinding_key_len == HMAC_SHA512_LEN);
-    JADE_INIT_OUT_PPTR(errmsg);
-
-    if (multisig_data->master_blinding_key_len != sizeof(multisig_data->master_blinding_key)) {
-        *errmsg = "No blinding key for multisig record";
-        return false;
-    }
-
-    // Need full SHA512 for low-level calls - pad front with 0's
-    memset(master_blinding_key, 0, master_blinding_key_len - multisig_data->master_blinding_key_len);
-    memcpy(master_blinding_key + master_blinding_key_len - multisig_data->master_blinding_key_len,
-        multisig_data->master_blinding_key, multisig_data->master_blinding_key_len);
 
     return true;
 }
@@ -639,15 +604,6 @@ bool multisig_create_export_file(const char* multisig_name, const multisig_data_
     // (as sorted is the default, and the 'sorted' flag is not standard)
     if (!multisig_data->sorted) {
         WRITE_KEY_VALUE_LINE(MSIG_FILE_SORTED, "False");
-    }
-
-    // Only output blinding key if it's set (as the 'blindingkey' flag is not standard)
-    if (multisig_data->master_blinding_key_len) {
-        char* blinding_key_hex = NULL;
-        JADE_WALLY_VERIFY(wally_hex_from_bytes(
-            multisig_data->master_blinding_key, multisig_data->master_blinding_key_len, &blinding_key_hex));
-        WRITE_KEY_VALUE_LINE(MSIG_FILE_BLINDING_KEY, blinding_key_hex);
-        JADE_WALLY_VERIFY(wally_free_string(blinding_key_hex));
     }
 
     // Signers

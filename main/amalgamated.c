@@ -5,7 +5,6 @@
 void __wrap_abort(void);
 #define abort __wrap_abort
 
-#define BUILD_ELEMENTS 1
 #define BUILD_MINIMAL 1
 #ifndef CONFIG_LIBJADE
 #define HAVE_MBEDTLS_SHA256_H
@@ -15,17 +14,12 @@ void __wrap_abort(void);
 #define ENABLE_MODULE_ECDH 1
 #define ENABLE_MODULE_ECDSA_S2C 1
 #define ENABLE_MODULE_EXTRAKEYS 1
-#define ENABLE_MODULE_GENERATOR 1
-#define ENABLE_MODULE_RANGEPROOF 1
 #define ENABLE_MODULE_RECOVERY 1
 #define ENABLE_MODULE_SCHNORRSIG 1
-#define ENABLE_MODULE_SURJECTIONPROOF 1
-#define ENABLE_MODULE_WHITELIST 1
 #define HAVE_BUILTIN_POPCOUNT 1
 #include "../components/libwally-core/upstream/src/amalgamation/combined.c"
 
 #include "./aes.c"
-#include "./assets.c"
 #include "./attestation/attestation.c"
 #include "./bcur.c"
 #ifdef CONFIG_BT_ENABLED
@@ -82,19 +76,14 @@ void __wrap_abort(void);
 #include "./process/debug_set_mnemonic.c"
 #include "./process/get_bip85_entropy.c"
 #include "./process/get_bip85_pubkey.c"
-#include "./process/get_blinding_factor.c"
-#include "./process/get_blinding_key.c"
-#include "./process/get_commitments.c"
 #include "./process/get_identity_pubkey.c"
 #include "./process/get_identity_shared_key.c"
-#include "./process/get_master_blinding_key.c"
 #include "./process/get_otp_code.c"
 #include "./process/get_receive_address.c"
 #include "./process/get_registered_descriptor.c"
 #include "./process/get_registered_descriptors.c"
 #include "./process/get_registered_multisig.c"
 #include "./process/get_registered_multisigs.c"
-#include "./process/get_shared_nonce.c"
 #include "./process/get_xpubs.c"
 #include "./process/mnemonic.c"
 #include "./process/ota.c"

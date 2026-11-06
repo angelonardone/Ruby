@@ -34,7 +34,6 @@ void get_receive_address_process(void* process_ptr)
     ASSERT_KEYCHAIN_UNLOCKED_BY_MESSAGE_SOURCE(process);
     GET_MSG_PARAMS(process);
     CHECK_NETWORK_CONSISTENT(process);
-    const bool isLiquid = network_is_liquid(network_id);
 
     // Handle single-sig and generic multisig script variants
     // (Green-multisig is the default for backwards compatibility)
@@ -45,13 +44,9 @@ void get_receive_address_process(void* process_ptr)
     warning_msg[0] = '\0';
     const char* errmsg = NULL;
 
-    uint8_t multisig_master_blinding_key[HMAC_SHA512_LEN];
-    const uint8_t* p_master_blinding_key = NULL;
-    size_t master_blinding_key_len = 0;
-
-    // Defaults to confidential addresses for liquid
-    const bool confidential = rpc_get_bool_or("confidential", &params, isLiquid);
-    if (confidential && !isLiquid) {
+    // Confidential addresses are a Liquid feature, not supported by Ruby
+    const bool confidential = rpc_get_bool_or("confidential", &params, false);
+    if (confidential) {
         jade_process_reject_message(
             process, CBOR_RPC_BAD_PARAMETERS, "Confidential addresses only apply to liquid networks");
         goto cleanup;
@@ -84,23 +79,7 @@ void get_receive_address_process(void* process_ptr)
             jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, "Failed to generate valid multisig script");
             goto cleanup;
         }
-
-        if (confidential) {
-            if (!multisig_get_master_blinding_key(
-                    multisig_data, multisig_master_blinding_key, sizeof(multisig_master_blinding_key), &errmsg)) {
-                jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, errmsg);
-                goto cleanup;
-            }
-            p_master_blinding_key = multisig_master_blinding_key;
-            master_blinding_key_len = sizeof(multisig_master_blinding_key);
-        }
     } else if (rpc_has_field_data("descriptor_name", &params)) {
-        if (isLiquid && !descriptor_allow_liquid()) {
-            jade_process_reject_message(
-                process, CBOR_RPC_BAD_PARAMETERS, "Descriptor wallets not supported on liquid network");
-            goto cleanup;
-        }
-
         // Load descriptor record
         descriptor_data_t* const descriptor = JADE_MALLOC(sizeof(descriptor_data_t));
         jade_process_free_on_exit(process, descriptor);
@@ -125,12 +104,6 @@ void get_receive_address_process(void* process_ptr)
                 sizeof(script), &script_len, &errmsg)) {
             jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, "Failed to generate valid descriptor script");
             goto cleanup;
-        }
-
-        if (confidential) {
-            // Use the wallet's own master blinding key (the descriptor's @B blinding key)
-            p_master_blinding_key = keychain_get()->master_unblinding_key;
-            master_blinding_key_len = sizeof(keychain_get()->master_unblinding_key);
         }
     } else {
         uint32_t path[MAX_PATH_LEN];
@@ -220,38 +193,13 @@ void get_receive_address_process(void* process_ptr)
             jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, "Unhandled script variant");
             goto cleanup;
         }
-
-        if (confidential) {
-            // Standard
-            p_master_blinding_key = keychain_get()->master_unblinding_key;
-            master_blinding_key_len = sizeof(keychain_get()->master_unblinding_key);
-        }
     }
 
     // Convert that into an address string
     JADE_ASSERT(script_len > 0);
     char address[MAX_ADDRESS_LEN];
     const bool has_value = false;
-    if (isLiquid) {
-        if (confidential) {
-            // Blind address
-            JADE_ASSERT(p_master_blinding_key && master_blinding_key_len == HMAC_SHA512_LEN);
-            uint8_t blinding_key[EC_PUBLIC_KEY_LEN];
-            if (!wallet_get_public_blinding_key(p_master_blinding_key, master_blinding_key_len, script, script_len,
-                    blinding_key, sizeof(blinding_key))) {
-                jade_process_reject_message(process, CBOR_RPC_INTERNAL_ERROR, "Cannot get blinding key for script");
-                goto cleanup;
-            }
-            elements_script_to_address(network_id, script, script_len, has_value, blinding_key, sizeof(blinding_key),
-                address, sizeof(address));
-        } else {
-            JADE_ASSERT(!p_master_blinding_key && !master_blinding_key_len);
-            elements_script_to_address(network_id, script, script_len, has_value, NULL, 0, address, sizeof(address));
-        }
-    } else {
-        JADE_ASSERT(!confidential && !p_master_blinding_key && !master_blinding_key_len);
-        script_to_address(network_id, script, script_len, has_value, address, sizeof(address));
-    }
+    script_to_address(network_id, script, script_len, has_value, address, sizeof(address));
 
     // Display to the user to confirm
     const bool default_selection = false;

@@ -16,7 +16,7 @@ Welcome to Jade's RPC documentation!
 * In some cases there may be a delay between sending a message and a reply being sent, where some physical interaction with the Jade unit is required.
 * In general, the types used are string, boolean, uint32/64, and raw byte-strings for binary data.
 * Every message contains an `id` field - an arbitrary string up to 16 characters - which is included in the reply.
-* Several calls require a `network` parameter.  Allowed values are: 'mainnet' and 'liquid'. If using a test wallet, 'testnet', 'testnet-liquid', 'localtest' and 'localtest-liquid' are allowed.
+* Several calls require a `network` parameter.  Allowed values are: 'mainnet'. If using a test wallet, 'testnet' and 'localtest' are allowed.  (Ruby is Bitcoin only: the Liquid networks of upstream Jade are not supported.)
 * Successful action replies include a `result` structure, specific to each method.
 * Failed/errored/declined actions instead include a common `error` structure.
 
@@ -178,7 +178,7 @@ get_version_info reply
 * 'JADE_NETWORKS' :
 
   - 'MAIN' - wallet is locked to mainnet/production networks and cannot be used on testnet or regtest networks.
-  - 'TEST' - wallet is locked to testnet/regtest/localtest networks, and cannot be used on mainnet or liquid production networks.
+  - 'TEST' - wallet is locked to testnet/regtest/localtest networks, and cannot be used on mainnet.
   - 'ALL' - wallet is not (yet) locked to a specific network type.
 
 .. _sign_attestation_request:
@@ -378,7 +378,7 @@ A call to 'auth_user' is required to unlock a Jade wallet and also to complete w
         }
     }
 
-* If completing initialisation, the call will result in the user setting a PIN (on the device) to persist the wallet with the blind pinserver. The wallet is locked to the type of network passed (ie. locked for use on mainnet and liquid production networks, OR for use on testnet/liquid-testnet/regtest networks).
+* If completing initialisation, the call will result in the user setting a PIN (on the device) to persist the wallet with the blind pinserver. The wallet is locked to the type of network passed (ie. locked for use on mainnet, OR for use on testnet/regtest networks).
 * If unlocking an initialised unit, the network passed indicates the intended network to use - an error is returned if this is inconsistent with that set when the wallet was initialised/persisted. The user will be asked to enter the PIN on the device, and the blind pinserver will be used to unlock the wallet.
 * 'epoch' is optional, and if passed sets the value of the internal clock - see set_epoch_request_ above.
 * Calling 'auth_user' on a wallet that is already unlocked validates the passed network and sets any epoch value, and returns immediately without requiring user interation.
@@ -644,7 +644,7 @@ Jade can store up to 16 user-defined miniscript descriptor wallet configurations
 
 * 'descriptor_name' is a string, and must be less than 16 characters long.  Using an existing name will overwrite the corresponding descriptor registration record.
 * 'descriptor' is the descriptor string.  It must be a BIP 388 'wallet policy' miniscript expression with the keys presented in the accompanying datavalues map.
-* 'datavalues' is the map of signers' keys, which must include an entry for the Jade signer. For Liquid confidential descriptors, the blinding key placeholder used in the "ct()" wrapper must be named "@B".
+* 'datavalues' is the map of signers' keys, which must include an entry for the Jade signer.
 
 
 .. _register_descriptor_reply:
@@ -747,7 +747,6 @@ Jade can store up to 16 user-defined multisig wallet configurations, which need 
                 "variant": "sh(multi(k))",
                 "sorted": true,
                 "threshold": 2,
-                "master_blinding_key": <32-bytes>
                 "signers": [
                     {
                         "fingerprint": <4 bytes>,
@@ -780,7 +779,6 @@ or:
 
 * 'multisig_name' is a string, and must be less than 16 characters long.  Using an existing name will overwrite the corresponding multisig registration record.
 * 'variant' indicates the script type used, and must be one of: 'sh(multi(k))', 'wsh(multi(k))' or 'sh(wsh(multi(k)))'
-* 'master_blinding_key' should be set for multisigs to be used on a Liquid network if the Jade is to provide confidential addresses, blinding keys, blinding nonces, asset blinding factors or output commitments.  Otherwise it can be omitted.
 * 'fingerprint' is the 4-byte wallet origin fingerprint - at least one signer must reference the Jade signer's root xpub fingerprint.
 * 'derivation' is the path from the origin to the given xpub - currently it is only used for the Jade signer, where it is used to verify the passed xpub.
 * 'xpub' is the signer xpub, as described by the 'fingerprint' and 'derivation' (validated, in the case of this unit's signer).
@@ -828,22 +826,19 @@ get_registered_multisigs reply
                 "variant": "wsh(multi(k))",
                 "sorted": true,
                 "threshold": 2,
-                "num_signers": 3,
-                "master_blinding_key": <32-bytes>
+                "num_signers": 3
             },
             "family": {
                 "variant": "sh(wsh(multi(k)))",
                 "sorted": false,
                 "threshold": 2,
-                "num_signers": 3,
-                "master_blinding_key": null
+                "num_signers": 3
             },
             "small_beans": {
                 "variant": "sh(multi(k))",
                 "sorted": true,
                 "threshold": 2,
-                "num_signers": 2,
-                "master_blinding_key": <32-bytes>
+                "num_signers": 2
             },
         }
     }
@@ -895,7 +890,6 @@ or:
             "variant": "wsh(multi(k))",
             "sorted": true,
             "threshold": 2,
-            "master_blinding_key": <32-bytes>,
             "signers": [
                 {
                     "fingerprint": <4 bytes>,
@@ -1068,8 +1062,6 @@ Request to fetch a multisig-sig address for the given (previously registered) mu
 * 'multisig_name' identifies a multisig wallet previously registered on the Jade hw unit.
 * 'paths' are the path suffixes to be applied to the xpubs in the multisig, in the order in which they were in the original registration.  NOTE: usually these paths will all be identical.
 
-
-- NOTE: Addresses generated for the liquid networks are 'confidential addresses' by default.  In order to confirm a 'non-confidential address' on liquid, pass an additional boolean flag '"confidential": false' in 'params'.
 
 .. _get_receive_address_reply:
 
@@ -1782,521 +1774,6 @@ sign_psbt reply
 * 'result' is the input psbt updated with any generated signatures.
 * NOTE: if 'get_extended_data' calls are needed, the bytes payload of the messages must be concatenated to yield the complete psbt.
 
-
-Blockstream Liquid specific
-===========================
-
-.. _get_master_blinding_key_request:
-
-get_master_blinding_key request
--------------------------------
-
-Used to fetch the master (SLIP-077) blinding key for the wallet.
-May block temporarily while asking the user to confirm the export from Jade.
-Passing 'only_if_silent' will instead immediately return a 'denied' error if it would usually need to ask the user to confirm.
-
-.. code-block:: cbor
-
-    {
-        "id": "66",
-        "method": "get_master_blinding_key"
-        "params": {
-            "only_if_silent": False
-        }
-    }
-
-* Passing 'only_if_silent' as True means the call will always return immediately - it will return the 'denied' error if it would normally ask the user to confirm.
-* Passing 'only_if_silent' as False (or not passing it at all) allows the call to block temporarily if asking the user to confirm the export is required.
-
-.. _get_master_blinding_key_reply:
-
-get_master_blinding_key reply
------------------------------
-
-* NOTE: The reply is not sent until the user has explicitly confirmed on the hw.
-
-.. code-block:: cbor
-
-    {
-        "id": "66",
-        "result": <32 bytes>
-    }
-
-.. _get_blinding_key_request:
-
-get_blinding_key request
-------------------------
-
-Used to fetch a script-specific public blinding key.
-
-.. code-block:: cbor
-
-    {
-        "id": "365",
-        "method": "get_blinding_key",
-        "params": {
-            "script": <bytes>
-            "multisig_name": "small_beans"
-        }
-    }
-
-* 'script' should be the raw bytes of the script for which the blinding key is required.
-* 'multisig_name' is optional and defaults to null.  It is only used for registered multisig wallets.
-
-.. _get_blinding_key_reply:
-
-get_blinding_key reply
-----------------------
-
-.. code-block:: cbor
-
-    {
-        "id": "365",
-        "result": <33 bytes>
-    }
-
-.. _get_shared_nonce_request:
-
-get_shared_nonce request
-------------------------
-
-Used to fetch a script-specific blinding nonce.
-
-.. code-block:: cbor
-
-    {
-        "id": "711",
-        "method": "get_shared_nonce",
-        "params": {
-            "script": <bytes>,
-            "their_pubkey": <33 bytes>,
-            "include_pubkey": false
-            "multisig_name": "small_beans"
-        }
-    }
-
-* 'script' should be the raw bytes of the script for which the blinding key is required.
-* 'their_pubkey' needs to be the EC public key of the counterparty for the given script.
-* 'include_pubkey' is an optional boolean field.  If present and 'true' the reply will also include the public blinding key for the script (see get_blinding_key_request_).
-* 'multisig_name' is optional and defaults to null.  It is only used for registered multisig wallets.
-
-.. _get_shared_nonce_reply:
-
-get_blinding_nonce reply
-------------------------
-
-When 'include_pubkey' not set, or 'false':
-
-.. code-block:: cbor
-
-    {
-        "id": "711",
-        "result": <32 bytes>
-    }
-
-When 'include_pubkey' present and 'true':
-
-.. code-block:: cbor
-
-    {
-        "id": "711",
-        "result": {
-            "shared_nonce": <32 bytes>,
-            "blinding_key": <33 bytes>
-        }
-    }
-
-.. _get_blinding_factor_request:
-
-get_blinding_factor request
----------------------------
-
-Used to fetch a deterministic output blinding factor (abf/assetblinder or vbf/valueblinder).
-
-.. code-block:: cbor
-
-    {
-        "id": "299792458",
-        "method": "get_blinding_factor",
-        "params": {
-            "hash_prevouts": <32 bytes>
-            "output_index": 1,
-            "type": "VALUE",
-            "multisig_name": "small_beans"
-        }
-    }
-
-* 'hash_prevout' should be the double sha256 of the serialization of all input outpoints, as documented in bip143.
-* 'type' must be either 'ASSET', 'VALUE', or 'ASSET_AND_VALUE'.
-* 'multisig_name' is optional and defaults to null.  It is only used for registered multisig wallets.
-
-.. _get_blinding_factor_reply:
-
-get_blinding_factor reply
--------------------------
-
-.. code-block:: cbor
-
-    {
-        "id": "299792458",
-        "result": <32 or 64 bytes>
-    }
-
-* For 'ASSET' and 'VALUE' requests a 32-byte blinding factor is returned.
-* For 'ASSET_AND_VALUE' requests a 64-byte abf|vbf value is returned - ie. the first 32 bytes are the abf, the second 32 bytes are the vbf.
-
-.. _get_commitments_request:
-
-get_commitments request
------------------------
-
-Used to fetch output commitments - ie. returns blinded output (and associated blinding factors).
-
-.. code-block:: cbor
-
-    {
-        "id": "867-5309",
-        "method": "get_commitments",
-        "params": {
-            "asset_id": <32 bytes>
-            "value": 9000000,
-            "hash_prevouts": <32 bytes>
-            "output_index": 1,
-            "vbf": <32 bytes>,
-            "multisig_name": "small_beans"
-        }
-    }
-
-* 'hash_prevout' should be the double sha256 of the serialization of all input out-points, as documented in bip143.
-* 'vbf' is an optional override, and defaults to null, in which case the value is calculated.
-* 'vbf' is provided for one output, so the tx commitment values sum correctly.
-* 'multisig_name' is optional and defaults to null.  It is only used for registered multisig wallets.
-
-.. _get_commitments_reply:
-
-get_commitments reply
----------------------
-
-.. code-block:: cbor
-
-    {
-        "id": "867-5309",
-        "result": {
-            "abf": <32 bytes>,
-            "vbf": <32 bytes>,
-            "asset_generator": <33 bytes>,
-            "value_commitment": <33 bytes>,
-            "asset_id": <32 bytes>,
-            "value", 9000000
-        }
-    }
-
-* NOTE: These commitments must be passed back to Jade when signing the liquid txn.
-
-.. _sign_liquid_tx_legacy_request:
-
-sign_liquid_tx request (legacy)
--------------------------------
-
-Request to sign liquid transaction inputs.
-
-* This flow should be considered legacy - 'anti-exfil' signatures should be preferred.  See sign_liquid_tx_ae_request_.
-* NOTE: The data is similar to that described in sign_tx_legacy_request_ - with the addition of a 'trusted_commitments' array and an optional array of asset data.
-
-.. code-block:: cbor
-
-    {
-        "id": "911",
-        "method": "sign_liquid_tx",
-        "params": {
-            "network": "testnet-liquid",
-            "genesis_hash": <bytes>,
-            "txn": <bytes>,
-            "num_inputs": 4,
-            "use_ae_signatures": false,
-            "change": [
-                null,
-                {
-                    "variant": "sh(wpkh(k))",
-                    "path": [2147483697, 2147483648, 2147483648, 0, 143],
-                    "is_change": true
-                },
-                null
-            ],
-            "asset_info": [
-                {
-                    "asset_id": "38fca2d939696061a8f76d4e6b5eecd54e3b4221c846f24a6b279e79952850a5",
-                    "contract": {
-                        "entity": {
-                            "domain": "liquidtestnet.com"
-                        },
-                        "issuer_pubkey": "035d0f7b0207d9cc68870abfef621692bce082084ed3ca0c1ae432dd12d889be01",
-                        "name": "Testnet Asset",
-                        "precision": 3,
-                        "ticker": "TEST",
-                        "version": 0
-                    },
-                    "issuance_prevout": {
-                        "txid": "0e19e938c74378ae83b549213a12be88ede6e32e1407bfdf50c4ec3f927408ec",
-                        "vout": 0
-                    }
-                }
-            ],
-            "trusted_commitments": [
-                {
-                    "abf": "308fee61c9b6f6ba534abefaa0e3fef58f5dc8b8a772135f157b3f771b005164",
-                    "asset_generator": "0bacf4e230f12327ff795f8c814f80b0502e78683d067fe75ba38fd2d0be27188b",
-                    "asset_id": "38fca2d939696061a8f76d4e6b5eecd54e3b4221c846f24a6b279e79952850a5",
-                    "blinding_key": "03462d3febd7654b22c6faaf5d12a400693dbdf21f8cb9a82e18aba8457c6812d4",
-                    "value": 50000000,
-                    "value_commitment": <33 bytes>,
-                    "vbf": <32 bytes>
-                },
-                {
-                    "abf": "a3510210bbab6ed67429af9beaf42f09382e12146a3db466971b58a45516bba0",
-                    "asset_generator": "0abd23178d9ff73cf848d8d88a7c7e269a464f53017cab0f9f53ed9d64b2849713",
-                    "asset_id": "144c654344aa716d6f3abcc1ca90e5641e4e2a7f633bc09fe3baf64585819a49",
-                    "blinding_key": "023454c233497be73ed98c07d5e9069e21519e94d0663375ca57c982037546e352",
-                    "value": 9000000,
-                    "value_commitment": "0881e4ace4be80524bcc4f566e46a452ab5f43a49929cbf5743d9e1de879a478a7",
-                    "vbf": "6ec064a68075a278bfca4a10f777c730116e9ba02fbb343a237c847e4d2fbf53"
-                },
-                null
-            ],
-            "additional_info": {
-                "tx_type": "swap",
-                "wallet_input_summary": [
-                    {
-                        "asset_id": "144c654344aa716d6f3abcc1ca90e5641e4e2a7f633bc09fe3baf64585819a49",
-                        "satoshi": 1000000
-                    }
-                ],
-                "wallet_output_summary": [
-                    {
-                        "asset_id": "38fca2d939696061a8f76d4e6b5eecd54e3b4221c846f24a6b279e79952850a5",
-                        "satoshi": 50000000
-                    }
-                ]
-            }
-        }
-    }
-
-* Most fields are as described in sign_tx_legacy_request_.
-* 'genesis_hash' is optional, but if passed should be an ELIP-101 compatible genesis blockhash for the network being signed for. Only valid for Liquid regtest and Liquid testnet networks.
-* 'asset_info' is optional, but if passed should be the asset-id, contract and issuance-prevout sections of the asset registry data pertinent to the assets being transacted.  If present, this allows the transaction details displayed on Jade to include assets' name, issuer and ticker fields, rather than just asset-id alone.  NOTE: if passed, this data must be accurate as obtained from the asset registry json, and the fields in the expected (ie. alphabetical) order.  'asset_info' for the network policy-asset is not required.
-* 'trusted_commitments' must be passed in for each blinded output.  Where an output is not blinded (eg. fee output) null may be passed.If 'asset_generator' and 'value_commitment' are included, they must match the value in the matching transaction output being signed.
-* 'trusted_commitments' entries passed in here can be obtained using the get_commitments_request_, with the relevant 'blinding_key' added (which would originally be obtained from get_blinding_key_request_).
-* NOTE: as of Jade fw v0.1.34, external blinding is supported, in which case the 'trusted_commitments' can be constructed by the host application.  Note the 'asset_id' byte-order is that consistent with the registry data, but the 'abf' and 'vbf' fields need to be in the byte-order in which they would be used in the blinding (which may be reversed).
-* 'additional_info' is only required for advanced transaction types such as asset swaps, and can be omitted for vanilla 'send payment' type transactions.  If included, it contains the net movements of assets into and out of the wallet (ie. sum of inputs minus change outputs, and sum of non-change outputs per asset)
-
-.. _sign_liquid_tx_legacy_reply:
-
-sign_liquid_tx reply (legacy)
------------------------------
-
-* As sign_tx_legacy_reply_
-* NOTE: The reply is not sent until the user has explicitly confirmed the outputs on the hw.
-
-.. code-block:: cbor
-
-    {
-        "id": "911",
-        "result": true
-    }
-
-At this point, the details of the tx-inputs must be sent to Jade for signing.
-
-.. _sign_liquid_tx_legacy_input_request:
-
-sign_liquid_tx input request (legacy)
--------------------------------------
-
-A batch of 'tx_input' messages should be sent to Jade - one for each tx input, as in sign_tx_legacy_input_request_.
-
-* NOTE: No replies will be sent until the entire batch has been processed and confirmed on Jade.
-
-.. code-block:: cbor
-
-    {
-        "id": "999",
-        "method": "tx_input",
-        "params": {
-            "is_witness": true,
-            "script": <bytes>,
-            "value_commitment": <33 bytes>,
-            "path": [2147483697, 2147483648, 2147483648, 0, 34],
-            "sighash": 3
-        }
-    }
-
-* NOTE: Unlike Bitcoin signing, no 'input_tx' is needed.
-* 'is_witness', 'script', 'path' and 'sighash' are as in sign_tx_legacy_input_request_.
-* In addition, if a signature is required for this input and 'is_witness' is 'true', then the input utxo 'value_commitment' must be passed.
-* For advanced tx types, eg swaps, with blinded inputs, we pass the unblinding info here.  ie. asset_id, abf, asset_generator, value and vbf - these are as in the 'commitments' data in sign_liquid_tx_legacy_request_.
-* If any input to be signed is taproot (p2tr), then 'scriptpubkey', 'value_commitment' and 'asset_generator' are required for _all inputs_ in the transaction.
-
-Once the entire batch (of 'tx_input' messages) has been sent, processed and confirmed on Jade, a batch of replies are sent.
-
-.. _sign_liquid_tx_legacy_input_reply:
-
-sign_liquid_tx input reply (legacy)
------------------------------------
-
-* As sign_tx_legacy_input_reply_
-
-The batch of replies should contain the same number of messages as the number of 'tx_input' messages sent, and the order of replies corresponds to the order of input messages (order of inputs in the txn).
-
-.. code-block:: cbor
-
-    {
-        "id": "999",
-        "result": <bytes>
-    }
-
-* 'result' will be the bytes for the signature for the corresponding input, in DER format with the sighash appended.
-* 'result' will be empty, if no signature was required for this input.
-
-.. _sign_liquid_tx_ae_request:
-
-sign_liquid_tx request (anti-exfil)
------------------------------------
-
-To use Anti-Exfil signatures (recommended), the initial request is the same as in sign_liquid_tx_legacy_request_, except the 'use_ae_signatures' field should be set to 'true'.
-
-.. _sign_liquid_tx_ae_reply:
-
-sign_liquid_tx reply (anti-exfil)
----------------------------------
-
-The initial reply is the same as in sign_liquid_tx_legacy_reply_.
-
-.. code-block:: cbor
-
-    {
-        "id": "911",
-        "result": true
-    }
-
-At this point, the details of the tx-inputs must be sent to Jade for signing.
-
-sign_liquid_tx input request (anti-exfil)
------------------------------------------
-
-As in sign_liquid_tx_legacy_input_request_, 'tx_input' messages should be sent to Jade - one for each tx input.
-However, in this case the message must include the 'ae_host_commitment'.
-
-.. code-block:: cbor
-
-    {
-        "id": "5040",
-        "method": "tx_input",
-        "params": {
-            "is_witness": true,
-            "script": <bytes>,
-            "value_commitment": <33 bytes>,
-            "path": [2147483697, 2147483648, 2147483648, 0, 34],
-            "sighash": 2,
-            "ae_host_commitment": <32 bytes>
-        }
-    }
-
-
-* NOTE: in the Anti-Exfil flow the reply will be sent immediately, and does not wait for all inputs to be sent.
-
-.. _sign_liquid_tx_ae_input_reply:
-
-sign_liquid_tx input reply (anti-exfil)
----------------------------------------
-
-* As sign_liquid_tx_legacy_input_reply_
-
-.. code-block:: cbor
-
-    {
-        "id": "5040",
-        "result": <32 bytes>
-    }
-
-* In the case of Anti-Exfil signing, the inital returned data is the 'signer commitment' bytes (which the caller can use later to verify the signature).
-* 'result' will be empty, if no signature was required for this input.
-
-Once all 'tx_input' messages have been sent, the caller must then send a 'get_signature' message for each input, passing the 'host entropy'.
-
-.. _sign_liquid_tx_ae_get_signature_request:
-
-get_signature request (sign_liquid_tx)
---------------------------------------
-
-* As sign_tx_ae_get_signature_request_
-* NOTE: The first reply is not sent until the user has explicitly confirmed signing on the hw.
-
-Request to fetch an Anti-Exfil signature, providing the 'host entropy' (as in sign_message_ae_get_signature_request_).
-
-.. code-block:: cbor
-
-    {
-        "id": "256",
-        "method": "get_signature",
-        "params": {
-            "ae_host_entropy": <32 bytes>
-        }
-    }
-
-The reply is then sent immediately.
-
-.. _sign_liquid_tx_ae_get_signature_reply:
-
-get_signature reply (sign_liquid_tx)
-------------------------------------
-
-* As sign_tx_ae_get_signature_reply_
-
-.. code-block:: cbor
-
-    {
-        "id": "256",
-        "result": <bytes>
-    }
-
-* 'result' will be the bytes for the signature for the corresponding input, in DER format with the sighash appended.
-* 'result' will be empty, if no signature was required for this input.
-
-.. _show_bip85_bip39_entropy_request:
-
-show_bip85_bip39_entropy request
---------------------------------
-
-Request to show bip85-bip39 entropy as a qr code.
-
-.. code-block:: cbor
-
-    {
-        "id": "256",
-        "method": "show_bip85_bip39_entropy",
-        "params": {
-            "num_words": 12,
-            "index": 0,
-            "pubkey": <33 bytes>
-        }
-    }
-
-* 'num_words' the number of words the entropy is required to produce (must be 12 or 24).
-* 'index' the index to use in the bip32 path to calculate the entropy.
-* 'pubkey' the host ephemeral pubkey to use to generate a shared ecdh secret to use as an AES key to encrypt the returned entropy.
-
-.. _show_bip85_bip39_entropy_reply:
-
-show_bip85_bip39_entropy reply
-------------------------------
-
-* NOTE: The reply is not sent until the user has explicitly confirmed on the hw. It is sent once the QR code is displayed, before the user closes the QR screen.
-
-.. code-block:: cbor
-
-    {
-        "id": "256",
-        "result": true
-    }
 
 Indices and tables
 ==================

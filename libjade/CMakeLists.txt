@@ -105,7 +105,6 @@ set(COMMON_INCLUDES
   ${CMAKE_CURRENT_SOURCE_DIR}/..
   ${CMAKE_CURRENT_SOURCE_DIR}/../main
   ${CMAKE_CURRENT_SOURCE_DIR}/../components/libwally-core/upstream/include
-  ${CMAKE_CURRENT_SOURCE_DIR}/../components/assets
   ${CMAKE_CURRENT_SOURCE_DIR}/../components/esp32_bsdiff
   ${CMAKE_CURRENT_SOURCE_DIR}/../components/esp32-quirc
   ${CMAKE_CURRENT_SOURCE_DIR}/../components/esp32-quirc/lib
@@ -155,23 +154,6 @@ target_compile_definitions(jade_static PRIVATE CONFIG_DISPLAY_WIDTH=${JADE_DISPL
 add_executable(libjade_daemon daemon.c)
 target_link_libraries(libjade_daemon PRIVATE jade_static bcur cbor_target otpauth_migrate_target m z mbedtls mbedcrypto mbedx509 Threads::Threads)
 target_include_directories(libjade_daemon PRIVATE ${COMMON_INCLUDES})
-
-# Assets
-set(ASSETS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../components/assets)
-
-add_custom_command(OUTPUT asset_data.inc
-    COMMAND python3 ${ASSETS_DIR}/gen_assets.py ${ASSETS_DIR}/asset_data.json ${CMAKE_CURRENT_BINARY_DIR}/asset_data.inc
-    DEPENDS ${ASSETS_DIR}/gen_assets.py ${ASSETS_DIR}/asset_data.json
-    VERBATIM)
-
-add_custom_command(OUTPUT asset_data_testnet.inc
-    COMMAND python3 ${ASSETS_DIR}/gen_assets.py ${ASSETS_DIR}/asset_data_testnet.json ${CMAKE_CURRENT_BINARY_DIR}/asset_data_testnet.inc
-    DEPENDS ${ASSETS_DIR}/gen_assets.py ${ASSETS_DIR}/asset_data_testnet.json
-    VERBATIM)
-
-add_custom_target(asset_data DEPENDS asset_data.inc asset_data_testnet.inc)
-add_dependencies(jade asset_data)
-add_dependencies(jade_static asset_data)
 
 target_compile_options(jade PRIVATE -Werror=unused-result)
 target_compile_options(jade_static PRIVATE -Werror=unused-result)

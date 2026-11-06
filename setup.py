@@ -26,8 +26,7 @@ setup(
         'Jade',
         'Hardware wallet',
         'Bitcoin',
-        'BTC'
-        'Liquid',
+        'BTC',
     ],
     project_urls={
         'Documentation': 'https://github.com/Blockstream/Jade/README.md',

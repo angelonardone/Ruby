@@ -15,7 +15,7 @@
 #include "jade_assert.h"
 
 // This should be the size of the largest valid input message.
-// Used by ble and serial when reading data in. (sign-liquid-txn)
+// Used by ble and serial when reading data in. (large messages, eg. sign_psbt)
 // NOTE: limited to 17k when SPIRAM not enabled.
 #ifndef CONFIG_SPIRAM
 #define MAX_INPUT_MSG_SIZE (1024 * 17)

@@ -4,8 +4,6 @@ from . import *
 from .. import _get_test_cases
 
 
-LIQUID_DESCRIPTORS = True
-
 # Time to wait for stale data timeout on device before sending follow-up message.
 # The firmware stale-data timeout (wire.c TIMEOUT_TICKS) is 3s on v1.x and 2s on v2.x.
 # This value must be > TIMEOUT_TICKS to reliably trigger the stale path.
@@ -14,16 +12,10 @@ STALE_DATA_TIMEOUT = 4
 NUM_VALUES_VERINFO = 23
 
 LOW_LEVEL_VECTORS = next(_get_test_cases('tests/rpc/data/low_level/bad_params.json'))[0]
-LOW_LEVEL_LIQUID_VECTORS = next(_get_test_cases(
-    'tests/rpc/data/low_level/bad_params_liquid.json'))[0]
 TEST_SCRIPT = LOW_LEVEL_VECTORS['TEST_SCRIPT']
 TEST_THEIR_PK = LOW_LEVEL_VECTORS['TEST_THEIR_PK']
 TEST_HASH_PREVOUTS = LOW_LEVEL_VECTORS['TEST_HASH_PREVOUTS']
 TEST_REGTEST_BITCOIN = LOW_LEVEL_VECTORS['TEST_REGTEST_BITCOIN']
-EXPECTED_MASTER_BLINDING_KEY = LOW_LEVEL_VECTORS['EXPECTED_MASTER_BLINDING_KEY']
-EXPECTED_BLINDING_KEY = LOW_LEVEL_VECTORS['EXPECTED_BLINDING_KEY']
-EXPECTED_LIQ_COMMITMENT_1 = LOW_LEVEL_VECTORS['EXPECTED_LIQ_COMMITMENT_1']
-EXPECTED_LIQ_COMMITMENT_2 = LOW_LEVEL_VECTORS['EXPECTED_LIQ_COMMITMENT_2']
 
 
 def _test_good_params(jade, rpc_args):
@@ -308,31 +300,5 @@ def test_bad_params(jade):
             ('signTx', 'sign_tx',
              {'network': 'localtest', 'txn': vectors['good_tx'],
               'num_inputs': 1}))
-        assert result is True
-        check_bad_params(jade.jade, badinput, errormsg)
-
-
-def test_bad_params_liquid(jade):
-    vectors = LOW_LEVEL_LIQUID_VECTORS
-    for badmsg, errormsg in vectors['bad_params']:
-        check_bad_params(jade.jade, badmsg, errormsg)
-    for badcommitment, errormsg in vectors['bad_commitments']:
-        if not get_jade_config().has_psram and ('asset_blind_proof' in badcommitment or
-                                                'value_blind_proof' in badcommitment):
-            continue
-        check_bad_params(
-            jade.jade,
-            ('signLiquid', 'sign_liquid_tx',
-             {'network': 'localtest-liquid', 'txn': vectors['good_tx'],
-              'num_inputs': 1,
-              'trusted_commitments': [badcommitment, {}]}),
-            errormsg)
-    for badinput, errormsg in vectors['bad_liq_inputs']:
-        result = _test_good_params(
-            jade.jade,
-            ('signLiquidInput', 'sign_liquid_tx',
-             {'network': 'localtest-liquid', 'txn': vectors['good_tx'],
-              'num_inputs': 1,
-              'trusted_commitments': vectors['good_commitments']}))
         assert result is True
         check_bad_params(jade.jade, badinput, errormsg)
