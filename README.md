@@ -1,3 +1,19 @@
+# Ruby
+
+**Ruby** is the hardware-key firmware of DistributedCryptography, for generic ESP32 / ESP32-S3 boards.
+It is **based on [Blockstream Jade](https://github.com/Blockstream/Jade)** and, like Jade, is licensed
+under the **GPL-3** (see [LICENSE](./LICENSE)).
+
+"Jade" in this repository refers to Blockstream's product and to the upstream code Ruby is based on.
+Ruby is not affiliated with or endorsed by Blockstream, and it can not run on retail Blockstream Jade units
+(they only accept firmware signed by Blockstream).
+
+Ruby tracks upstream Jade so that its security fixes can be merged: see [UPSTREAM.md](./UPSTREAM.md).
+
+The original Jade documentation follows.
+
+---
+
 # Jade Firmware Development
 
 * DO NOT ATTEMPT TO BUILD/FLASH WITH OFFICIAL BLOCKSTREAM JADE HARDWARE UNITS
