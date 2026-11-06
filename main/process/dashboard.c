@@ -144,6 +144,7 @@ void get_bip85_pubkey_process(void* process_ptr);
 void sign_bip85_digests_process(void* process_ptr);
 void show_bip85_bip39_entropy_process(void* process_ptr);
 void get_bip85_bip39_entropy_process(void* process_ptr);
+void get_utility_keys_process(void* process_ptr); // Ruby
 #ifdef CONFIG_DEBUG_MODE
 void get_bip85_rsa_entropy_process(void* process_ptr);
 void debug_capture_image_data_process(void* process_ptr);
@@ -589,6 +590,9 @@ static void dispatch_message(jade_process_t* process)
             task_function = get_bip85_pubkey_process;
         } else if (IS_METHOD("get_bip85_bip39_entropy")) {
             task_function = get_bip85_bip39_entropy_process;
+        } else if (IS_METHOD("get_utility_keys")) {
+            // Ruby: DistributedCryptography wallet utility keys
+            task_function = get_utility_keys_process;
         } else if (IS_METHOD("sign_bip85_digests")) {
             task_function = sign_bip85_digests_process;
         } else if (IS_METHOD("show_bip85_bip39_entropy")) {

@@ -1775,6 +1775,50 @@ sign_psbt reply
 * NOTE: if 'get_extended_data' calls are needed, the bytes payload of the messages must be concatenated to yield the complete psbt.
 
 
+Ruby specific
+=============
+
+.. _get_utility_keys_request:
+
+get_utility_keys request
+------------------------
+
+Used by the DistributedCryptography wallet to fetch its 'utility keys': the hardened children of the BIP86 account m/86'/c'/0' that the wallet uses for things other than spending (login, chat, groups, local files, file encryption, software HSM).  The user must confirm on the device.  The seed, the account key and every spending key stay on Ruby: the list of exported paths is fixed in the firmware and only contains hardened children, which reveal neither their parent nor their siblings.
+
+.. code-block:: cbor
+
+    {
+        "id": "8341",
+        "method": "get_utility_keys",
+        "params": {
+            "network": "mainnet",
+            "pubkey": <33 bytes>
+        }
+    }
+
+* 'network' selects the coin type (0' for mainnet, 1' for testnet/localtest) and the xprv/tprv version of the returned keys.
+* 'pubkey' is the host ephemeral public key used, with a Ruby ephemeral key, for the ECDH shared secret that encrypts the reply.
+
+.. _get_utility_keys_reply:
+
+get_utility_keys reply
+----------------------
+
+.. code-block:: cbor
+
+    {
+        "id": "8341",
+        "result": {
+            "pubkey": <33 bytes>,
+            "encrypted": <bytes>
+        }
+    }
+
+* 'pubkey' is the Ruby ephemeral public key for the ECDH shared secret.
+* 'encrypted' is the output of libwally aes_cbc_with_ecdh_key() (iv, AES-256-CBC ciphertext, hmac) with the label 'ruby_utility_keys', as for get_bip85_bip39_entropy.
+* Decrypted, it is 6 BIP32 serialized extended private keys (78 bytes each) in this order, relative to m/86'/c'/0': 1000'/0' (login), 2000'/0' (chat), 3000'/0' (groups), 4000'/0' (json files), 5000'/0' (file encryption), 6000' (HSM root).
+* A wallet restored from the same mnemonic (no BIP39 passphrase) derives exactly the same keys.
+
 Indices and tables
 ==================
 

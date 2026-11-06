@@ -723,6 +723,37 @@ class JadeAPI:
                   'pubkey': pubkey}
         return self._jadeRpc('get_bip85_bip39_entropy', params)
 
+    def get_utility_keys(self, network, pubkey):
+        """
+        Ruby: RPC call to fetch the encrypted DistributedCryptography wallet 'utility keys'.
+
+        These are the hardened children of the BIP86 account m/86'/c'/0' that the wallet uses for
+        things other than spending (login, chat, groups, files, HSM).  The user must confirm on the
+        device.  Spending keys never leave the device.
+
+        Parameters
+        ----------
+        network : str
+            Network to which the keys apply - eg. 'mainnet', 'testnet', 'localtest'.
+            Selects the coin type (0' for mainnet, 1' otherwise) and the xprv/tprv version.
+
+        pubkey: 33-bytes
+            The host ephemeral pubkey to use to generate a shared ecdh secret to use as an AES key
+            to encrypt the returned keys.
+
+        Returns
+        -------
+        dict
+            pubkey - 33-bytes, Ruby's ephemeral pubkey used to generate the shared ecdh secret
+            encrypted - bytes, the keys AES encrypted with the ecdh shared secret (label
+            'ruby_utility_keys', see wally aes_cbc_with_ecdh_key), prefixed with the iv and
+            followed by the hmac.  Decrypted, it is 6 BIP32 serialized extended private keys
+            (78 bytes each) in this order, relative to m/86'/c'/0':
+            1000'/0', 2000'/0', 3000'/0', 4000'/0', 5000'/0', 6000'
+        """
+        params = {'network': network, 'pubkey': pubkey}
+        return self._jadeRpc('get_utility_keys', params)
+
     def show_bip85_bip39_entropy(self, num_words, index, pubkey):
         """
         RPC call to show bip85-bip39 entropy as a qr code.

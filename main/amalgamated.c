@@ -80,6 +80,7 @@ void __wrap_abort(void);
 #include "./process/get_identity_shared_key.c"
 #include "./process/get_otp_code.c"
 #include "./process/get_receive_address.c"
+#include "./process/get_utility_keys.c"
 #include "./process/get_registered_descriptor.c"
 #include "./process/get_registered_descriptors.c"
 #include "./process/get_registered_multisig.c"
