@@ -3097,10 +3097,9 @@ void gui_set_activity_title(gui_activity_t* activity, const char* title)
 
 gui_activity_t* gui_current_activity(void) { return current_activity; }
 
-#ifdef CONFIG_BOARD_TYPE_JADE_ANY
+// Ruby: every board shows the Ruby splash picture (Jade showed it only on Jade hardware)
 extern const uint8_t splashstart[] asm("_binary_splash_bin_gz_start");
 extern const uint8_t splashend[] asm("_binary_splash_bin_gz_end");
-#endif
 
 gui_activity_t* gui_display_splash(void)
 {
@@ -3109,12 +3108,8 @@ gui_activity_t* gui_display_splash(void)
 
     // Blank screen while awaiting attestation data upload
     if (!gui_awaiting_attestation_data()) {
-#ifdef CONFIG_BOARD_TYPE_JADE_ANY
         Picture* const pic = get_picture(splashstart, splashend);
         gui_make_picture(&splash_node, pic);
-#else
-        gui_make_text(&splash_node, "Jade DIY", TFT_WHITE);
-#endif
         gui_set_align(splash_node, GUI_ALIGN_CENTER, GUI_ALIGN_MIDDLE);
         gui_set_parent(splash_node, act->root_node);
     }

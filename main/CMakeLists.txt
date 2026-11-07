@@ -9,8 +9,11 @@ if(CONFIG_ETH_USE_OPENETH)
     endif()
 endif()
 
+# Ruby: every board shows the Ruby splash picture
+list(APPEND logo_files ${PROJECT_DIR}/logo/splash.bin.gz)
+
 if (CONFIG_BOARD_TYPE_JADE_ANY)
-    list(APPEND logo_files ${PROJECT_DIR}/logo/splash.bin.gz ${PROJECT_DIR}/logo/ce.bin.gz ${PROJECT_DIR}/logo/fcc.bin.gz ${PROJECT_DIR}/logo/weee.bin.gz)
+    list(APPEND logo_files ${PROJECT_DIR}/logo/ce.bin.gz ${PROJECT_DIR}/logo/fcc.bin.gz ${PROJECT_DIR}/logo/weee.bin.gz)
     if (CONFIG_BOARD_TYPE_JADE_V1_1 OR CONFIG_BOARD_TYPE_JADE_V2_ANY)
         list(APPEND logo_files ${PROJECT_DIR}/logo/telec.bin.gz)
     endif()
