@@ -16,6 +16,7 @@ PSRAM=""
 UNAMALGAMATED=""
 WEBDISPLAY=""
 WEBDISPLAY_LARGER=""
+WEBDISPLAY_M5BASIC=""
 SKIP_RECONFIGURE=""
 
 function usage {
@@ -36,6 +37,7 @@ function usage {
     echo "    --psram      Emulate a device with PSRAM support"
     echo "    --webdisplay Provide a device display using a web browser"
     echo "    --webdisplay-larger Provide a larger device display for --webdisplay"
+    echo "    --webdisplay-m5basic Provide an M5Stack Basic display (320x240, buttons A/B/C) for --webdisplay"
     echo "COMMON OPTIONS:"
     echo "    --dev        Development (non-production) device (mandatory for qemu)"
     echo "    --ci         Automatically execute the default UX action for CI testing"
@@ -103,6 +105,7 @@ while true; do
         --unamalgamated) UNAMALGAMATED=1; shift ;;
         --webdisplay) WEBDISPLAY=1; shift ;;
         --webdisplay-larger) WEBDISPLAY=1; WEBDISPLAY_LARGER=1; shift ;;
+        --webdisplay-m5basic) WEBDISPLAY=1; WEBDISPLAY_M5BASIC=1; shift ;;
         --skip-reconfigure) SKIP_RECONFIGURE=1; shift ;;
         -h | --help) usage ;;
         "") break ;;
@@ -304,6 +307,13 @@ if [ -n "$PSRAM" ]; then
         echo "updating config file for larger webdisplay build ..."
         # add settings
         set_config CONFIG_BOARD_TYPE_QEMU_LARGER y
+        # remove settings
+        remove_config CONFIG_BOARD_TYPE_QEMU
+    fi
+    if [ -n "$WEBDISPLAY_M5BASIC" ]; then
+        echo "updating config file for M5Stack Basic webdisplay build ..."
+        # add settings
+        set_config CONFIG_BOARD_TYPE_QEMU_M5BASIC y
         # remove settings
         remove_config CONFIG_BOARD_TYPE_QEMU
     fi

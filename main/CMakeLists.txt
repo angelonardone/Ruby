@@ -58,9 +58,9 @@ idf_component_register(SRC_DIRS "."
 if(CONFIG_ETH_USE_OPENETH)
     if (CONFIG_HAS_CAMERA)
         add_custom_command(OUTPUT ${PROJECT_DIR}/build/display.html.gz ${PROJECT_DIR}/build/jade.png.gz
-             COMMAND sed -e "s/DISPLAY_WIDTH/${CONFIG_DISPLAY_WIDTH}/g" -e "s/DISPLAY_HEIGHT/${CONFIG_DISPLAY_HEIGHT}/g" ${PROJECT_DIR}/main/qemu/display.html | gzip -k -9 -c > ${PROJECT_DIR}/build/display.html.gz
+             COMMAND sed -e "s/DISPLAY_WIDTH/${CONFIG_DISPLAY_WIDTH}/g" -e "s/DISPLAY_HEIGHT/${CONFIG_DISPLAY_HEIGHT}/g" ${PROJECT_DIR}/main/qemu/${CONFIG_DISPLAY_QEMU_HTML}.html | gzip -k -9 -c > ${PROJECT_DIR}/build/display.html.gz
              COMMAND gzip -k -9 -c ${PROJECT_DIR}/main/qemu/${CONFIG_DISPLAY_QEMU_IMAGE}.png > ${PROJECT_DIR}/build/jade.png.gz
-             DEPENDS ${PROJECT_DIR}/main/qemu/display.html ${PROJECT_DIR}/main/qemu/jade.png
+             DEPENDS ${PROJECT_DIR}/main/qemu/${CONFIG_DISPLAY_QEMU_HTML}.html ${PROJECT_DIR}/main/qemu/${CONFIG_DISPLAY_QEMU_IMAGE}.png
              VERBATIM)
 
         add_custom_target(gen_gz_files

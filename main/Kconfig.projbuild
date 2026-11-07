@@ -125,26 +125,34 @@ menu "Blockstream Jade"
             bool "qemu display via websocket"
         config BOARD_TYPE_QEMU_LARGER
             bool "qemu display via websocket with a larger display"
+        config BOARD_TYPE_QEMU_M5BASIC
+            bool "qemu display via websocket with the M5Stack Basic layout (320x240, three buttons)"
         config BOARD_TYPE_CUSTOM
             bool "Custom board"
             select CUSTOM_PINS
     endchoice
 
     config DISPLAY_QEMU_IMAGE
-        depends on BOARD_TYPE_QEMU || BOARD_TYPE_QEMU_LARGER
+        depends on BOARD_TYPE_QEMU || BOARD_TYPE_QEMU_LARGER || BOARD_TYPE_QEMU_M5BASIC
         string "image used for qemu"
         default "jade"
         default "jadel" if BOARD_TYPE_QEMU_LARGER
 
+    config DISPLAY_QEMU_HTML
+        depends on BOARD_TYPE_QEMU || BOARD_TYPE_QEMU_LARGER || BOARD_TYPE_QEMU_M5BASIC
+        string "web page (main/qemu/<name>.html) used for the qemu display"
+        default "display_m5basic" if BOARD_TYPE_QEMU_M5BASIC
+        default "display"
+
     config DISPLAY_FULL_FRAME_BUFFER
         depends on SPIRAM
         bool "enables full display buffering (requires SPI ram) - faster but takes ram"
-        default y if SPIRAM && !BOARD_TYPE_QEMU && !BOARD_TYPE_QEMU_LARGER && !BOARD_TYPE_M5_FIRE
+        default y if SPIRAM && !BOARD_TYPE_QEMU && !BOARD_TYPE_QEMU_LARGER && !BOARD_TYPE_QEMU_M5BASIC && !BOARD_TYPE_M5_FIRE
 
     config DISPLAY_FULL_FRAME_BUFFER_DOUBLE
         depends on DISPLAY_FULL_FRAME_BUFFER
         bool "enables double full display buffering (requires SPI ram) - faster but takes double the ram than having a frame buffer ram"
-        default y if SPIRAM && DISPLAY_FULL_FRAME_BUFFER && !BOARD_TYPE_QEMU && !BOARD_TYPE_QEMU_LARGER && !BOARD_TYPE_M5_FIRE
+        default y if SPIRAM && DISPLAY_FULL_FRAME_BUFFER && !BOARD_TYPE_QEMU && !BOARD_TYPE_QEMU_LARGER && !BOARD_TYPE_QEMU_M5BASIC && !BOARD_TYPE_M5_FIRE
 
     config DISPLAY_TOUCHSCREEN
         bool "Set if touchscreen is available"
@@ -533,14 +541,14 @@ menu "Blockstream Jade"
         config DISPLAY_WIDTH
             int "Display width in pixels"
             range 0 640
-            default 320 if BOARD_TYPE_JADE_V2_ANY || BOARD_TYPE_QEMU_LARGER || BOARD_TYPE_M5_FIRE || BOARD_TYPE_M5_BLACK_GRAY || BOARD_TYPE_TTGO_TDISPLAYS3 || BOARD_TYPE_M5_CORES3 || BOARD_TYPE_M5_CORE2
+            default 320 if BOARD_TYPE_JADE_V2_ANY || BOARD_TYPE_QEMU_LARGER || BOARD_TYPE_QEMU_M5BASIC || BOARD_TYPE_M5_FIRE || BOARD_TYPE_M5_BLACK_GRAY || BOARD_TYPE_TTGO_TDISPLAYS3 || BOARD_TYPE_M5_CORES3 || BOARD_TYPE_M5_CORE2
             default 480 if BOARD_TYPE_TTGO_TDISPLAYS3PROCAMERA || BOARD_TYPE_WS_TOUCH_LCD35
             default 240
         config DISPLAY_HEIGHT
             int "Display height in pixels"
             range 0 640
             default 135 if BOARD_TYPE_JADE_V1_ANY || BOARD_TYPE_TTGO_TDISPLAY || BOARD_TYPE_M5_STICKC_PLUS || BOARD_TYPE_M5_STICKC_PLUS_2
-            default 240 if BOARD_TYPE_M5_FIRE || BOARD_TYPE_M5_BLACK_GRAY || BOARD_TYPE_M5_CORE2
+            default 240 if BOARD_TYPE_M5_FIRE || BOARD_TYPE_M5_BLACK_GRAY || BOARD_TYPE_M5_CORE2 || BOARD_TYPE_QEMU_M5BASIC
             default 170 if BOARD_TYPE_JADE_V2_ANY || BOARD_TYPE_QEMU_LARGER || BOARD_TYPE_TTGO_TDISPLAYS3
             default 200 if BOARD_TYPE_M5_CORES3 || BOARD_TYPE_TTGO_TWATCHS3
             default 222 if BOARD_TYPE_TTGO_TDISPLAYS3PROCAMERA
