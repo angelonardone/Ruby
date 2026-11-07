@@ -221,7 +221,7 @@ static void make_status_bar(void)
     JADE_ASSERT(name_parent);
     JADE_ASSERT(name_parent->kind == FILL);
     JADE_ASSERT(name_alignment != GUI_ALIGN_CENTER);
-    gui_make_text_font(&status_bar.title, "Jade", TFT_WHITE, GUI_TITLE_FONT);
+    gui_make_text_font(&status_bar.title, "Ruby", TFT_WHITE, GUI_TITLE_FONT);
     gui_set_align(status_bar.title, name_alignment, GUI_ALIGN_MIDDLE);
     gui_set_parent(status_bar.title, name_parent);
 

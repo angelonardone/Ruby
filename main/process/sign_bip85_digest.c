@@ -137,7 +137,7 @@ void sign_bip85_digests_process(void* process_ptr)
     JADE_ASSERT(ret > 0 && ret < sizeof(buf3));
 
     const char* message[] = { buf1, buf2, buf3 };
-    if (!await_yesno_activity("BIPI85 RSA Signing", message, 3, true, "blkstrm.com/bip85rsa")) {
+    if (!await_yesno_activity("BIPI85 RSA Signing", message, 3, true, "distributedcryptography.com/ruby/bip85rsa")) {
         JADE_LOGW("User declined to sign digests with BIP85 key");
         jade_process_reject_message(process, CBOR_RPC_USER_CANCELLED, "User declined to sign digests");
         goto cleanup;

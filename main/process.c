@@ -212,10 +212,10 @@ static void deduce_jade_id(void)
     char* hexout = NULL;
     JADE_WALLY_VERIFY(wally_hex_from_bytes(macid, 6, &hexout));
 
-    jade_id[0] = 'J';
-    jade_id[1] = 'a';
-    jade_id[2] = 'd';
-    jade_id[3] = 'e';
+    jade_id[0] = 'R';
+    jade_id[1] = 'u';
+    jade_id[2] = 'b';
+    jade_id[3] = 'y';
     jade_id[4] = ' ';
     jade_id[5] = toupper((int)hexout[6]);
     jade_id[6] = toupper((int)hexout[7]);

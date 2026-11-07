@@ -360,7 +360,7 @@ bool handle_xpub_options(uint32_t* qr_flags, bool for_descriptor)
                 }
             }
         } else if (ev_id == BTN_XPUB_OPTIONS_HELP) {
-            await_qr_help_activity("blkstrm.com/xpub");
+            await_qr_help_activity("distributedcryptography.com/ruby/xpub");
         } else if (ev_id == BTN_XPUB_OPTIONS_EXIT) {
             // Done
             break;
@@ -763,7 +763,7 @@ static bool verify_address(const address_data_t* const addr_data)
             JADE_ASSERT(ret > 0 && ret < sizeof(next_n_addrs));
 
             const char* message[] = { "Failed to verify, check", next_n_addrs };
-            if (!await_yesno_activity("Verify Address", message, 2, true, "blkstrm.com/scanaddress")) {
+            if (!await_yesno_activity("Verify Address", message, 2, true, "distributedcryptography.com/ruby/scanaddress")) {
                 // Abandon - exit loop
                 break;
             }
@@ -1121,7 +1121,7 @@ static bool parse_sign_display_bcur_psbt_qr(const uint8_t* cbor, const size_t cb
 
     // Now display bcur QR
     const char* message[] = { "Scan with", "wallet", "app" };
-    display_bcur_qr(message, 3, BCUR_TYPE_CRYPTO_PSBT, cbor_signed, cbor_signed_len, "blkstrm.com/psbt");
+    display_bcur_qr(message, 3, BCUR_TYPE_CRYPTO_PSBT, cbor_signed, cbor_signed_len, "distributedcryptography.com/ruby/psbt");
     ret = true;
 
 cleanup:
@@ -1133,7 +1133,7 @@ void show_bip85_bip39_entropy_qr(const uint8_t* cbor, const size_t cbor_len)
 {
     JADE_ASSERT(cbor && cbor_len);
     const char* message[] = { "Scan with", "wallet", "app" };
-    display_bcur_qr(message, 3, BCUR_TYPE_JADE_BIP8539_REPLY, cbor, cbor_len, "blkstrm.com/bip85");
+    display_bcur_qr(message, 3, BCUR_TYPE_JADE_BIP8539_REPLY, cbor, cbor_len, "distributedcryptography.com/ruby/bip85");
 }
 
 // Returns false if an error occurred or the user cancelled the action
@@ -1261,7 +1261,7 @@ void handle_scan_qr(void)
     char* type = NULL;
     uint8_t* data = NULL;
     size_t data_len = 0;
-    if (!bcur_scan_qr(NULL, &type, &data, &data_len, 0, "blkstrm.com/jadescan") || !data) {
+    if (!bcur_scan_qr(NULL, &type, &data, &data_len, 0, "distributedcryptography.com/ruby/scan") || !data) {
         // Scan aborted
         JADE_ASSERT(!type);
         JADE_ASSERT(!data);
@@ -1411,7 +1411,11 @@ void await_single_qr_activity(
     }
 }
 
+// Ruby: our help pages live under this domain, which is too long for one line next to the qr
+#define RUBY_HELP_DOMAIN "distributedcryptography.com"
+
 // Put an explicit \n before the last part of the url
+// Ruby: urls on our site ('<domain>/ruby/<topic>') are shown as 'distributed' / 'cryptography' / '.com/ruby/' / '<topic>'
 static void add_cr_after_last_slash(const char* url, char* output, const size_t output_len)
 {
     JADE_ASSERT(url);
@@ -1420,6 +1424,13 @@ static void add_cr_after_last_slash(const char* url, char* output, const size_t 
 
     const size_t url_len = strlen(url);
     JADE_ASSERT(output_len >= url_len + 2); // url + new \n +_ trailing \0
+
+    const size_t domain_len = strlen(RUBY_HELP_DOMAIN);
+    if (url_len > domain_len + 6 && !strncmp(url, RUBY_HELP_DOMAIN "/ruby/", domain_len + 6)) {
+        const int ret = snprintf(output, output_len, "distributed\ncryptography\n.com/ruby/\n%s", url + domain_len + 6);
+        JADE_ASSERT(ret > 0 && ret < output_len);
+        return;
+    }
 
     // Find last '/' character
     const char* last_slash = url;
@@ -1542,7 +1553,7 @@ void await_qr_help_activity(const char* url)
     bytes_to_qr_icon((const uint8_t*)url, url_len, qr_icon);
 
     // Put an explicit \n before the last part of the url
-    char url_with_crlf[MAX_QR_V4_DATA_LEN + 2]; // new \n and trailing \0
+    char url_with_crlf[MAX_QR_V4_DATA_LEN + 4]; // new \n and trailing \0 (Ruby urls: three \n, see add_cr_after_last_slash)
     add_cr_after_last_slash(url, url_with_crlf, sizeof(url_with_crlf));
 
     gui_activity_t* const prev_act = gui_current_activity(); // Save current activity
@@ -1671,7 +1682,7 @@ static bool scan_qr_post_in_message(const char* label, const char* expected_type
 
     // NOTE: we take ownership of 'type' and 'data'
     const uint32_t offset = 1; // Allow for a prefix message source byte
-    if (!bcur_scan_qr(label, &type, &data, &data_len, offset, "blkstrm.com/qrpin")) {
+    if (!bcur_scan_qr(label, &type, &data, &data_len, offset, "distributedcryptography.com/ruby/qrpin")) {
         JADE_LOGI("QR scanning failed or abandoned");
         return false;
     }
@@ -1758,8 +1769,8 @@ cleanup:
 
 bool handle_jade_reply_pinserver_request(const uint8_t* msg, const size_t len, void* ctx)
 {
-    const char* message[] = { "Step 1/2", "Scan Jade", "QR" };
-    return handle_jade_reply_http_request_show_qr(message, 3, msg, len, ctx, "blkstrm.com/qrpin");
+    const char* message[] = { "Step 1/2", "Scan Ruby", "QR" };
+    return handle_jade_reply_http_request_show_qr(message, 3, msg, len, ctx, "distributedcryptography.com/ruby/qrpin");
 }
 
 static bool handle_outbound_reply(outbound_message_writer_fn_t handler)

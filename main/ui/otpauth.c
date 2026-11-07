@@ -217,7 +217,7 @@ bool show_otp_details_activity(
             break;
 
         case BTN_SETTINGS_OTP_HELP:
-            await_qr_help_activity("blkstrm.com/otp");
+            await_qr_help_activity("distributedcryptography.com/ruby/otp");
             break;
 
         case BTN_OTP_DISCARD_DELETE:

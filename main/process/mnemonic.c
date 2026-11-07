@@ -77,7 +77,7 @@ static bool mnemonic_export_qr(const char* mnemonic, bool* export_qr_verified)
     *export_qr_verified = false;
 
     const char* question[] = { "Draw the", "CompactSeedQR for", "use with QR Mode." };
-    if (!await_skipyes_activity(NULL, question, 3, true, "blkstrm.com/seedqr")) {
+    if (!await_skipyes_activity(NULL, question, 3, true, "distributedcryptography.com/ruby/seedqr")) {
         // User decided against it at this time - 'true' return implies a definitive
         // decision by the user - as opposed to a simple 'back' button press.
         return true;
@@ -209,7 +209,7 @@ static bool mnemonic_export_qr(const char* mnemonic, bool* export_qr_verified)
         // Verify QR by scanning it back
         qr_data_t* qr_data = JADE_CALLOC(1, sizeof(qr_data_t));
         const bool scan_success
-            = jade_camera_scan_qr(qr_data, "Scan QR to verify", QR_GUIDE_SHOW, "blkstrm.com/seedqr");
+            = jade_camera_scan_qr(qr_data, "Scan QR to verify", QR_GUIDE_SHOW, "distributedcryptography.com/ruby/seedqr");
         const bool qr_found = scan_success && qr_data->len != 0;
         const bool is_match = qr_found && qr_data->len == entropy_len && !memcmp(qr_data->data, entropy, entropy_len);
         wally_bzero(qr_data, sizeof(qr_data_t));
@@ -276,7 +276,7 @@ static bool display_confirm_mnemonic(const size_t nwords, char* mnemonic, const 
     // Show the warning banner screen, user to confirm
     {
         const char* message[] = { "These words are your", "wallet. Keep them", "protected and offline." };
-        if (!await_continueback_activity(NULL, message, 3, true, "blkstrm.com/phrase")) {
+        if (!await_continueback_activity(NULL, message, 3, true, "distributedcryptography.com/ruby/phrase")) {
             // Abandon before we begin
             return false;
         }
@@ -618,7 +618,7 @@ static final_word_action_t select_final_word_action(void)
             } else if (ev_id == BTN_MNEMONIC_FINAL_WORD_CALCULATE) {
                 return FINAL_WORD_CALCULATE;
             } else if (ev_id == BTN_MNEMONIC_FINAL_WORD_HELP) {
-                await_qr_help_activity("blkstrm.com/finalword");
+                await_qr_help_activity("distributedcryptography.com/ruby/finalword");
             }
         }
     }
@@ -1389,7 +1389,7 @@ static bool mnemonic_qr(char* mnemonic, const size_t mnemonic_len)
 
     // We return 'true' if we scanned any string data at all
     const bool qr_scanned
-        = jade_camera_scan_qr(&qr_data, NULL, QR_GUIDE_SHOW, "blkstrm.com/scanwallet") && qr_data.len > 0;
+        = jade_camera_scan_qr(&qr_data, NULL, QR_GUIDE_SHOW, "distributedcryptography.com/ruby/scanwallet") && qr_data.len > 0;
     if (!qr_scanned) {
         JADE_LOGW("No qr code scanned");
         goto cleanup;
@@ -1536,8 +1536,8 @@ void initialise_with_mnemonic(const bool temporary_restore, const bool force_qr_
         if (temporary_restore) {
             act = make_restore_mnemonic_activity(temporary_restore);
         } else {
-            const char* message[] = { "For setup instructions", "visit blockstream.com/", "jade" };
-            if (await_continueback_activity(NULL, message, 3, true, "blkstrm.com/jade")) {
+            const char* message[] = { "For setup instructions visit", "distributedcryptography.com", "/ruby/setup" };
+            if (await_continueback_activity(NULL, message, 3, true, "distributedcryptography.com/ruby/setup")) {
                 act = make_mnemonic_setup_type_activity();
             } else {
                 // User decided against it
@@ -1576,7 +1576,7 @@ void initialise_with_mnemonic(const bool temporary_restore, const bool force_qr_
 
             case BTN_MNEMONIC_ADVANCED:
                 const char* message[] = { "Technical features", "will be presented.", "Proceed with caution." };
-                advanced_mode = await_continueback_activity("Advanced Setup", message, 3, true, "blkstrm.com/advanced");
+                advanced_mode = await_continueback_activity("Advanced Setup", message, 3, true, "distributedcryptography.com/ruby/advanced");
                 if (advanced_mode) {
                     act = make_mnemonic_setup_method_activity(advanced_mode);
                 } else {
@@ -1669,7 +1669,7 @@ void initialise_with_mnemonic(const bool temporary_restore, const bool force_qr_
         // If the user did not scan a QR, offer the chance to export (ie. draw) one now
         if (!qr_scanned) {
             const char* question[] = { "Export recovery phrase", "as a CompactSeedQR?" };
-            bool export_qr = await_yesno_activity(NULL, question, 2, true, "blkstrm.com/seedqr");
+            bool export_qr = await_yesno_activity(NULL, question, 2, true, "distributedcryptography.com/ruby/seedqr");
 
             bool export_qr_verified = false;
             while (export_qr) {
@@ -1733,7 +1733,7 @@ void handle_bip85_mnemonic()
     JADE_ASSERT(keychain_get());
 
     const char* message[] = { "Create a new recovery", "phrase derived from", "wallet and index" };
-    if (!await_continueback_activity("BIP85", message, 3, true, "blkstrm.com/bip85")) {
+    if (!await_continueback_activity("BIP85", message, 3, true, "distributedcryptography.com/ruby/bip85")) {
         // User declined
         return;
     }
@@ -1781,7 +1781,7 @@ void handle_bip85_mnemonic()
         const int ret = snprintf(buf, sizeof(buf), "%" PRIu32, index);
         JADE_ASSERT(ret > 0 && ret < sizeof(buf));
         const char* message[] = { "BIP85 index selected:", buf };
-        if (await_continueback_activity("BIP85", message, 2, true, "blkstrm.com/bip85")) {
+        if (await_continueback_activity("BIP85", message, 2, true, "distributedcryptography.com/ruby/bip85")) {
             JADE_LOGI("BIP85 index number selected: %" PRIu32, index);
             break;
         }

@@ -191,7 +191,7 @@ static int get_bip85_bip39_entropy_data(const CborValue* params, bip85_data_t* b
         // User to confirm
         const char* message[] = { "Continue to pair", "with wallet app." };
 
-        if (!await_continueback_activity("Enable Swaps", message, 2, false, "blkstrm.com/swaps85")) {
+        if (!await_continueback_activity("Enable Swaps", message, 2, false, "distributedcryptography.com/ruby/swaps85")) {
             goto user_cancel;
         }
     } else {
@@ -206,7 +206,7 @@ static int get_bip85_bip39_entropy_data(const CborValue* params, bip85_data_t* b
 
         const char* message[] = { "Export an encrypted", nwordphrase, txtindex };
 
-        if (!await_continueback_activity("Key Export", message, 3, false, "blkstrm.com/bip85")) {
+        if (!await_continueback_activity("Key Export", message, 3, false, "distributedcryptography.com/ruby/bip85")) {
         user_cancel:
             *errmsg = "User declined to export entropy";
             return CBOR_RPC_USER_CANCELLED;
@@ -261,7 +261,7 @@ static int get_bip85_rsa_entropy_data(const CborValue* params, bip85_data_t* bip
 
     const char* message[] = { "Export an encrypted", nwordphrase, txtindex };
 
-    if (!await_continueback_activity("Key Export", message, 3, false, "blkstrm.com/bip85")) {
+    if (!await_continueback_activity("Key Export", message, 3, false, "distributedcryptography.com/ruby/bip85")) {
         // User declined
         *errmsg = "User declined to export entropy";
         return CBOR_RPC_USER_CANCELLED;

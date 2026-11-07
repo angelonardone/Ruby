@@ -261,7 +261,7 @@ static bool get_pin_load_keys(jade_process_t* process, const bool suppress_pin_c
     SENSITIVE_PUSH(aeskey_new, sizeof(aeskey_new));
 
     // Do the pinserver 'getpin' process
-    const char* unlock_pin_msg = suppress_pin_change_confirmation ? "Enter Current PIN" : "Unlock Jade";
+    const char* unlock_pin_msg = suppress_pin_change_confirmation ? "Enter Current PIN" : "Unlock Ruby";
     if (!get_pin_get_aeskey(process, unlock_pin_msg, pin, sizeof(pin), aeskey, sizeof(aeskey))) {
         // User abandoned entering PIN, or some sort of server or networking/connection error
         // NOTE: reply message will have already been sent

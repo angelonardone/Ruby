@@ -126,8 +126,8 @@ void register_otp_process(void* process_ptr)
     // Check keychain has seed data
     if (keychain_get()->seed_len == 0) {
         JADE_LOGE("No wallet seed available.  Wallet must be re-initialised from mnemonic.");
-        jade_process_reject_message(process, CBOR_RPC_INTERNAL_ERROR, "Feature requires resetting Jade");
-        await_error("Feature requires Jade reset");
+        jade_process_reject_message(process, CBOR_RPC_INTERNAL_ERROR, "Feature requires resetting Ruby");
+        await_error("Feature requires Ruby reset");
         goto cleanup;
     }
 
@@ -199,7 +199,7 @@ static bool get_otp_data_from_kb(
             await_error(errmsg);
         } else {
             const char* question[] = { kb_entry.strdata };
-            done = await_yesno_activity("Confirm OTP Name", question, 1, true, "blkstrm.com/otp");
+            done = await_yesno_activity("Confirm OTP Name", question, 1, true, "distributedcryptography.com/ruby/otp");
         }
     }
 
@@ -238,7 +238,7 @@ static bool get_otp_data_from_kb(
             otpauth_ctx_t otp_ctx = { .name = otp_name };
             if (!otp_uri_to_ctx(kb_entry.strdata, kb_entry.len, &otp_ctx)) {
                 const char* message[] = { "Invalid OTP URI" };
-                if (!await_continueback_activity(NULL, message, 1, true, "blkstrm.com/otp")) {
+                if (!await_continueback_activity(NULL, message, 1, true, "distributedcryptography.com/ruby/otp")) {
                     // Invalid and user opts to abandon
                     kb_entry.len = 0; // blank out any invalid value
                     break;
@@ -269,7 +269,7 @@ bool register_otp_kb_entry(void)
     // Check keychain has seed data
     if (keychain_get()->seed_len == 0) {
         JADE_LOGE("No wallet seed available.  Wallet must be re-initialised from mnemonic.");
-        await_error("Feature requires Jade reset");
+        await_error("Feature requires Ruby reset");
     }
 
     bool ret = false;
@@ -331,7 +331,7 @@ static bool validate_scanned_otp_uri(qr_data_t* qr_data)
     // Show the user that a valid qr was scanned, but the string data
     // did not constitute a valid/parseable OTP URI string.
     const char* message[] = { "Invalid OTP URI" };
-    if (!await_continueback_activity(NULL, message, 1, true, "blkstrm.com/otp")) {
+    if (!await_continueback_activity(NULL, message, 1, true, "distributedcryptography.com/ruby/otp")) {
         // return true if we are done (ie abandoning) or false if we are to return to scanning
         qr_data->len = 0; // blank out any invalid value
         return true; // ie. done with scanning
@@ -357,7 +357,7 @@ int register_otp_string(const char* otp_uri, const size_t uri_len, const char** 
     if (keychain_get()->seed_len == 0) {
         JADE_LOGE("No wallet seed available"); // Wallet must be re-initialised from mnemonic
         *errmsg = "No wallet seed available";
-        await_error("Feature requires Jade wallet");
+        await_error("Feature requires Ruby wallet");
         return CBOR_RPC_INTERNAL_ERROR;
     }
 
@@ -428,7 +428,7 @@ bool register_otp_qr(void)
     // Check keychain has seed data
     if (keychain_get()->seed_len == 0) {
         JADE_LOGE("No wallet seed available.  Wallet must be re-initialised from mnemonic.");
-        await_error("Feature requires Jade reset");
+        await_error("Feature requires Ruby reset");
         return false;
     }
 
@@ -438,7 +438,7 @@ bool register_otp_qr(void)
     SENSITIVE_PUSH(&qr_data, sizeof(qr_data));
 
     // Get URI from qr code scan
-    if (!jade_camera_scan_qr(&qr_data, NULL, QR_GUIDE_SHOW, "blkstrm.com/otp") || !qr_data.len) {
+    if (!jade_camera_scan_qr(&qr_data, NULL, QR_GUIDE_SHOW, "distributedcryptography.com/ruby/otp") || !qr_data.len) {
         // User exit without scanning
         JADE_LOGW("No qr code scanned");
         goto cleanup;

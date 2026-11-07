@@ -578,7 +578,7 @@ bool multisig_create_export_file(const char* multisig_name, const multisig_data_
     char buf[MAX_PATH_STR_LEN(MAX_PATH_LEN)];
 
     // Comment and name
-    WRITE_TEXT("# Exported by Blockstream Jade", true);
+    WRITE_TEXT("# Exported by Ruby", true);
     WRITE_KEY_VALUE_LINE(MSIG_FILE_NAME, multisig_name);
 
     // Policy

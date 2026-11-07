@@ -249,7 +249,7 @@ static bool select_file_from_filtered_list(const char* title, const char* const 
             }
 
             if (ev_id == BTN_SETTINGS_USBSTORAGE_HELP) {
-                await_qr_help_activity("blkstrm.com/jadeusbstorage");
+                await_qr_help_activity("distributedcryptography.com/ruby/usbstorage");
                 gui_set_current_activity(act);
             }
         }
@@ -282,7 +282,7 @@ static bool handle_usbstorage_action(const char* title, usbstorage_action_fn_t u
 
     while (usb_is_powered()) {
         const char* message[] = { "Disconnect USB power and", "connect a storage device" };
-        if (!await_continueback_activity(title, message, 2, true, "blkstrm.com/jadeusbstorage")) {
+        if (!await_continueback_activity(title, message, 2, true, "distributedcryptography.com/ruby/usbstorage")) {
             return false;
         }
     }
@@ -352,7 +352,7 @@ static bool handle_usbstorage_action(const char* title, usbstorage_action_fn_t u
                     break;
                 }
                 if (ev_id == BTN_SETTINGS_USBSTORAGE_HELP) {
-                    await_qr_help_activity("blkstrm.com/jadeusbstorage");
+                    await_qr_help_activity("distributedcryptography.com/ruby/usbstorage");
                     gui_set_current_activity(act_prompt);
                 }
             }
@@ -1036,14 +1036,14 @@ static bool export_usb_xpub_fn(const usbstorage_action_context_t* ctx)
     JADE_WALLY_VERIFY(wally_descriptor_free(d));
 
     const size_t written
-        = write_buffer_to_file(USBSTORAGE_MOUNT_POINT "/jade-xpub.txt", (const uint8_t*)descriptor, descriptor_len);
+        = write_buffer_to_file(USBSTORAGE_MOUNT_POINT "/ruby-xpub.txt", (const uint8_t*)descriptor, descriptor_len);
 
     if (written != descriptor_len) {
         await_error_2("Failed to save", "xpub file");
         return false;
     }
 
-    await_message_2("xpub saved to", "jade-xpub.txt");
+    await_message_2("xpub saved to", "ruby-xpub.txt");
     return true;
 }
 

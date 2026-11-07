@@ -87,7 +87,7 @@ typedef struct {
 
 static const home_menu_item_t home_menu_items[HOME_SCREEN_TYPE_NUM_STATES][NUM_HOME_SCREEN_MENU_ENTRIES] = {
     // Uninitialised
-    { { .symbol = "1", .text = "Set Up Jade", .btn_id = BTN_INITIALIZE },
+    { { .symbol = "1", .text = "Set Up Ruby", .btn_id = BTN_INITIALIZE },
 #ifdef CONFIG_HAS_CAMERA
         { .symbol = "2", .text = "Scan SeedQR", .btn_id = BTN_SCAN_SEEDQR },
 #endif
@@ -656,8 +656,8 @@ static void dispatch_message(jade_process_t* process)
 static void offer_jade_reset(void)
 {
     // Run 'Reset Jade?'  confirmation screen and wait for yes/no response
-    const char* question[] = { "Reset Jade and erase all", "PIN and wallet data?", "This cannot be undone!" };
-    if (!await_yesno_activity_critical("Factory Reset", question, 3, false, "blkstrm.com/reset")) {
+    const char* question[] = { "Reset Ruby and erase all", "PIN and wallet data?", "This cannot be undone!" };
+    if (!await_yesno_activity_critical("Factory Reset", question, 3, false, "distributedcryptography.com/ruby/reset")) {
         // User decided against it
         return;
     }
@@ -677,7 +677,7 @@ static void offer_jade_reset(void)
     JADE_ASSERT(ret > 0 && ret < sizeof(confirm_msg));
 
     digit_entry_t digit_entry = { .entry_type = DIGIT_ENTRY_PIN, .initial_state = RANDOM, .digits_shown = true };
-    make_digit_entry_activity(&digit_entry, "Reset Jade", confirm_msg);
+    make_digit_entry_activity(&digit_entry, "Reset Ruby", confirm_msg);
     JADE_ASSERT(digit_entry.activity);
     JADE_STATIC_ASSERT(sizeof(num) == sizeof(digit_entry.digit));
 
@@ -700,7 +700,7 @@ static void offer_jade_reset(void)
         } else {
             // Erase failed ?    What can we do other than alert the user ?
             JADE_LOGE("Factory reset failed!");
-            await_error_2("Unable to completely", "reset Jade.");
+            await_error_2("Unable to completely", "reset Ruby.");
         }
     } else {
         // Incorrect - continue to boot screen
@@ -721,11 +721,9 @@ static bool auth_qr_mode_ex(const bool suppress_pin_change_confirmation)
     }
 
     // Otherwise user to confirm pinserver-via-QRs
-    char buf[16];
-    const int ret = snprintf(buf, sizeof(buf), "pn to %s", keychain_has_pin() ? "unlock" : "secure");
-    JADE_ASSERT(ret > 0 && ret < sizeof(buf));
-    const char* message[] = { "Visit", "blkstrm.com/", buf };
-    if (!await_qr_back_continue_activity(message, 3, "blkstrm.com/pn", true)) {
+    // Ruby: our domain does not fit in one line next to the qr
+    const char* message[] = { "distributed", "cryptography", ".com/ruby/pn" };
+    if (!await_qr_back_continue_activity(message, 3, "distributedcryptography.com/ruby/pn", true)) {
         // User decided against it
         return false;
     }
@@ -806,7 +804,7 @@ static void select_initial_connection(const bool offer_qr_temporary)
             }
         } else if (ev_id == BTN_CONNECT_QR_SCAN) {
             const char* message[] = { "This wallet will be", "temporary and", "forgotten on reboot" };
-            if (await_continueback_activity(NULL, message, 3, true, "blkstrm.com/qrmode")) {
+            if (await_continueback_activity(NULL, message, 3, true, "distributedcryptography.com/ruby/qrmode")) {
                 // 'QR-Mode' temporary login only
                 keychain_set_temporary();
                 if (auth_qr_mode()) {
@@ -817,7 +815,7 @@ static void select_initial_connection(const bool offer_qr_temporary)
         } else if (ev_id == BTN_CONNECT_QR_BACK) {
             act = act_select;
         } else if (ev_id == BTN_CONNECT_QR_HELP) {
-            await_qr_help_activity("blkstrm.com/qrmode");
+            await_qr_help_activity("distributedcryptography.com/ruby/qrmode");
         }
     }
 }
@@ -828,7 +826,7 @@ bool handle_mnemonic_qr(const char* mnemonic)
     JADE_ASSERT(mnemonic);
 
     const char* question[] = { "Wallet QR identified.", "Log out and switch", "wallets?" };
-    if (!await_yesno_activity("Switch Wallet", question, 3, true, "blkstrm.com/temporary")) {
+    if (!await_yesno_activity("Switch Wallet", question, 3, true, "distributedcryptography.com/ruby/temporary")) {
         // User opted against - return true to show qr handled without processing error
         return true;
     }
@@ -868,7 +866,7 @@ static void initialise_wallet(const bool temporary_restore)
 static bool offer_temporary_wallet_login(void)
 {
     const char* message[] = { "Do you want to", "temporarily log in with", "a recovery phrase?" };
-    if (!await_continueback_activity(NULL, message, 3, true, "blkstrm.com/temporary")) {
+    if (!await_continueback_activity(NULL, message, 3, true, "distributedcryptography.com/ruby/temporary")) {
         // User decided against it
         return false;
     }
@@ -974,7 +972,7 @@ static void handle_ble(void)
         } else if (ev_id == BTN_BLE_RESET_PAIRING) {
             handle_ble_reset();
         } else if (ev_id == BTN_BLE_HELP) {
-            await_qr_help_activity("blkstrm.com/bluetooth");
+            await_qr_help_activity("distributedcryptography.com/ruby/bluetooth");
         } else if (ev_id == BTN_BLE_EXIT) {
             // Done
             break;
@@ -989,7 +987,7 @@ static void handle_ble(void) { await_message_2("BLE disabled in", "this firmware
 static void handle_change_pin(void)
 {
     // Set flag to change pin on next successful auth/unlock
-    const char* message[] = { "Change your PIN", "after unlocking Jade?" };
+    const char* message[] = { "Change your PIN", "after unlocking Ruby?" };
     const bool change_pin = await_yesno_activity("Change PIN", message, 2, true, NULL);
     set_request_change_pin(change_pin);
 }
@@ -1025,7 +1023,7 @@ static bool offer_delete_registered_wallet(const char* name, const bool is_multi
 {
     JADE_ASSERT(name);
 
-    if (!await_yesno_activity_critical("Delete Wallet", &name, 1, false, "blkstrm.com/wallets")) {
+    if (!await_yesno_activity_critical("Delete Wallet", &name, 1, false, "distributedcryptography.com/ruby/wallets")) {
         return false;
     }
 
@@ -1141,7 +1139,7 @@ static void handle_registered_wallets(void)
 
                     // Get as cbor bytes
                     const char* message[] = { "Export", "Multisig", "wallet" };
-                    if (!display_bcur_bytes_qr(message, 3, (const uint8_t*)output, written, "blkstrm.com/wallets")) {
+                    if (!display_bcur_bytes_qr(message, 3, (const uint8_t*)output, written, "distributedcryptography.com/ruby/wallets")) {
                         JADE_LOGE("Failed to create multisig export details QR code");
                         await_error_2("Unable to export", "wallet details");
                         free(output);
@@ -1284,7 +1282,7 @@ static void handle_wallet_erase_pin(void)
 
                 await_message_2("Wallet-Erase PIN", "deleted");
             } else if (ev_id == BTN_WALLET_ERASE_PIN_HELP) {
-                await_qr_help_activity("blkstrm.com/duress");
+                await_qr_help_activity("distributedcryptography.com/ruby/duress");
             } else if (ev_id == BTN_WALLET_ERASE_PIN_EXIT) {
                 // Done
                 break;
@@ -1371,7 +1369,7 @@ static void handle_passphrase_prefs()
             }
             update_menu_item(method_item, "Method", passphrase_method_desc_from_flags(type));
         } else if (ev_id == BTN_PASSPHRASE_HELP) {
-            await_qr_help_activity("blkstrm.com/passphrase");
+            await_qr_help_activity("distributedcryptography.com/ruby/passphrase");
         } else if (ev_id == BTN_PASSPHRASE_EXIT) {
             // Done
             break;
@@ -1391,7 +1389,7 @@ static bool delete_otp_record(const char* otpname)
 {
     JADE_ASSERT(otpname);
 
-    if (!await_yesno_activity_critical("Delete OTP Record", &otpname, 1, false, "blkstrm.com/otp")) {
+    if (!await_yesno_activity_critical("Delete OTP Record", &otpname, 1, false, "distributedcryptography.com/ruby/otp")) {
         return false;
     }
 
@@ -1826,7 +1824,7 @@ static void update_home_screen_item_highlight_color(gui_view_node_t* item)
 static void handle_display_theme(void)
 {
     static const char* THEME_NAMES[GUI_NUM_DISPLAY_THEMES]
-        = { "Jade Green", "Bitcoin Orange", "Liquid Blue", "Cypherpunk Black", "Open-Source Opal" };
+        = { "Emerald Green", "Bitcoin Orange", "Liquid Blue", "Cypherpunk Black", "Open-Source Opal" };
     JADE_ASSERT(GUI_NUM_DISPLAY_THEMES < GUI_FLAGS_THEMES_MASK);
 
     const uint8_t initial_gui_flags = storage_get_gui_flags();
@@ -1920,7 +1918,7 @@ static void handle_pinserver_scan(void)
     char* type;
     uint8_t* data = NULL;
     size_t data_len = 0;
-    if (!bcur_scan_qr(NULL, &type, &data, &data_len, 0, "blkstrm.com/oracle")) {
+    if (!bcur_scan_qr(NULL, &type, &data, &data_len, 0, "distributedcryptography.com/ruby/oracle")) {
         // Scan aborted
         JADE_ASSERT(!type);
         JADE_ASSERT(!data);
@@ -2414,11 +2412,11 @@ static void handle_settings(const bool startup_menu)
 
         // Help screens
         case BTN_SETTINGS_PINSERVER_HELP:
-            await_qr_help_activity("blkstrm.com/oracle");
+            await_qr_help_activity("distributedcryptography.com/ruby/oracle");
             break;
 
         case BTN_SETTINGS_OTP_HELP:
-            await_qr_help_activity("blkstrm.com/otp");
+            await_qr_help_activity("distributedcryptography.com/ruby/otp");
             break;
 
         default:
@@ -2498,7 +2496,7 @@ static void handle_qr_mode(void)
                 break;
 
             case BTN_CONNECT_QR_HELP:
-                await_qr_help_activity("blkstrm.com/qrmode");
+                await_qr_help_activity("distributedcryptography.com/ruby/qrmode");
                 break;
 
             case BTN_CONNECT_QR_BACK:
@@ -2551,7 +2549,7 @@ static void handle_btn(const int32_t btn)
         break;
 
     case BTN_CONNECT_HELP:
-        await_qr_help_activity("blkstrm.com/jadewallets");
+        await_qr_help_activity("distributedcryptography.com/ruby/apps");
         break;
 
     default:

@@ -480,9 +480,9 @@ static void check_end(void)
     // Create GUI object
     gui_activity_t* act = NULL;
     gui_view_node_t* status_text = NULL;
-    check_template(&act, "END", "Turn off Jade", false, false, &status_text, gui_get_highlight_color());
+    check_template(&act, "END", "Turn off Ruby", false, false, &status_text, gui_get_highlight_color());
     gui_set_current_activity_ex(act, true);
-    gui_update_text(status_text, "Turn off jade");
+    gui_update_text(status_text, "Turn off Ruby");
 
     int32_t ev_id;
     while (true) {

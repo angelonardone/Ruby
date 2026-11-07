@@ -56,12 +56,12 @@ static const char* get_home_screen_title(const char* device_name)
     const int title_width = (CONFIG_DISPLAY_WIDTH * HOME_SCREEN_STATUS_BAR_TITLE_WIDTH_PERCENT) / 100;
 
     display_set_font(GUI_TITLE_FONT);
-    if (display_get_string_width(device_name) <= title_width || strncmp(device_name, "Jade ", strlen("Jade ")) != 0) {
+    if (display_get_string_width(device_name) <= title_width || strncmp(device_name, "Ruby ", strlen("Ruby ")) != 0) {
         return device_name;
     }
 
-    // Remove "Jade " prefix to allow the device ID to be shown.
-    return device_name + strlen("Jade ");
+    // Remove "Ruby " prefix to allow the device ID to be shown.
+    return device_name + strlen("Ruby ");
 }
 
 gui_activity_t* make_home_screen_activity(const char* device_name, const char* firmware_version,
@@ -531,7 +531,7 @@ gui_activity_t* make_wallet_erase_pin_info_activity(void)
     btn_data_t hdrbtns[] = { { .txt = "=", .font = JADE_SYMBOLS_16x16_FONT, .ev_id = BTN_WALLET_ERASE_PIN_EXIT },
         { .txt = "?", .font = GUI_TITLE_FONT, .ev_id = BTN_WALLET_ERASE_PIN_HELP } };
 
-    const char* message[] = { "A duress PIN will delete", "the wallet stored on", "Jade if entered" };
+    const char* message[] = { "A duress PIN will delete", "the wallet stored on", "Ruby if entered" };
 
     btn_data_t ftrbtn
         = { .txt = "Continue", .font = GUI_DEFAULT_FONT, .ev_id = BTN_WALLET_ERASE_PIN_SET, .borders = GUI_BORDER_TOP };

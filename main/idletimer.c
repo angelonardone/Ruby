@@ -89,7 +89,7 @@ static bool show_timeout_warning_screen(void)
 {
     gui_activity_t* const prior_activity = gui_current_activity();
 
-    const char* message[] = { "Jade preparing to sleep", "", "Press button to", "keep awake." };
+    const char* message[] = { "Ruby preparing to sleep", "", "Press button to", "keep awake." };
     gui_activity_t* const act = display_message_activity(message, 4);
     const bool ret = gui_activity_wait_event(
         act, GUI_EVENT, ESP_EVENT_ANY_ID, NULL, NULL, NULL, SECS_TO_TICKS(KEEP_AWAKE_WARNING_SECS));
