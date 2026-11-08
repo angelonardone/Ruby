@@ -4,7 +4,7 @@
 // The DistributedCryptography wallet derives, from its BIP86 account m/86'/c'/0', some hardened
 // 'utility' keys used for things other than spending: login, chat, groups, local file encryption,
 // file exchange and its software HSM. With Ruby the seed and every spending key stay on the device;
-// only these hardened children are handed to the wallet (after the PIN and a confirmation on screen),
+// only these hardened children are handed to the wallet (automatically, once the PIN has unlocked Ruby),
 // so the wallet works exactly as a software wallet restored from the same mnemonic.
 //
 // A hardened child private key reveals neither its parent nor its siblings, so these keys can not be
@@ -175,13 +175,9 @@ void get_utility_keys_process(void* process_ptr)
         goto cleanup;
     }
 
-    // User to confirm
-    const char* message[] = { "Export the encrypted", "wallet utility keys", "(login, chat, files)?" };
-    if (!await_continueback_activity("Wallet Keys", message, 3, false, NULL)) {
-        JADE_LOGW("User declined to export utility keys");
-        jade_process_reject_message(process, CBOR_RPC_USER_CANCELLED, "User declined to export utility keys");
-        goto cleanup;
-    }
+    // No confirmation on screen (Angelo, 2026-11-08): the keys go to the wallet automatically once the PIN
+    // has unlocked Ruby for this same host (checked above). Typing the PIN is the user's approval; the keys
+    // are only the fixed hardened utility children, never the account or a spending key.
 
     utility_keys_data_t data = { .encrypted_len = 0 };
     const char* errmsg = NULL;
