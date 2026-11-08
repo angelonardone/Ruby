@@ -37,6 +37,9 @@
 #elif defined(CONFIG_BOARD_TYPE_TTGO_TDISPLAY)
 // T-Display can read battery level but lacks hardware to read charging status
 #include "power/tdisplay.inc"
+#elif defined(CONFIG_BOARD_TYPE_QEMU_M5BASIC)
+// Ruby: the emulated M5Stack Basic behaves as the real one (IP5306) on USB power with a full battery
+#include "power/qemu_m5basic.inc"
 #elif defined(CONFIG_HAS_M5PM1)
 // M5 StickS3 has the M5PM1 PMIC
 #include "power/m5pm1.inc"

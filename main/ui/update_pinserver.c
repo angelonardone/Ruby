@@ -14,7 +14,8 @@ static gui_activity_t* make_pinserver_details_activities(const char* urlA, const
     JADE_INIT_OUT_PPTR(actpubkey);
 
     const bool show_help_btn = false;
-    const char* const title = initial_confirmation ? "Confirm Oracle" : "Oracle Details";
+    // Ruby: only a remote oracle (chosen on Ruby) is ever confirmed - the wallet oracle asks nothing
+    const char* const title = initial_confirmation ? "Remote Oracle" : "Oracle Details";
 
     // First row, URL
     gui_view_node_t* urlsplit;
@@ -155,7 +156,8 @@ static gui_activity_t* make_show_pinserver_certificate_activity(
 {
     JADE_ASSERT(cert_hash_hex);
 
-    const char* const title = initial_confirmation ? "Confirm Oracle" : "Oracle Details";
+    // Ruby: only a remote oracle (chosen on Ruby) is ever confirmed - the wallet oracle asks nothing
+    const char* const title = initial_confirmation ? "Remote Oracle" : "Oracle Details";
 
     btn_data_t hdrbtns[]
         = { { .txt = "=", .font = JADE_SYMBOLS_16x16_FONT, .ev_id = BTN_PINSERVER_DETAILS_RETAIN_CONFIRM },

@@ -504,11 +504,15 @@ gui_activity_t* make_pinserver_activity(void)
     btn_data_t hdrbtns[] = { { .txt = "=", .font = JADE_SYMBOLS_16x16_FONT, .ev_id = BTN_SETTINGS_PINSERVER_EXIT },
         { .txt = "?", .font = GUI_TITLE_FONT, .ev_id = BTN_SETTINGS_PINSERVER_HELP } };
 
-    btn_data_t menubtns[] = { { .txt = "Settings", .font = GUI_DEFAULT_FONT, .ev_id = BTN_SETTINGS_PINSERVER_SHOW },
+    // Ruby: the oracle of the wallet that uses Ruby is the default; a remote oracle only by choosing it here (before
+    // the wallet is created). With a camera the remote oracle can also come from a QR.
+    btn_data_t menubtns[] = { { .txt = "Show Oracle", .font = GUI_DEFAULT_FONT, .ev_id = BTN_SETTINGS_PINSERVER_SHOW },
+        { .txt = "Use Wallet Oracle", .font = GUI_DEFAULT_FONT, .ev_id = BTN_SETTINGS_PINSERVER_RESET },
+        { .txt = "Use Remote Oracle", .font = GUI_DEFAULT_FONT, .ev_id = BTN_SETTINGS_PINSERVER_REMOTE },
 #ifdef CONFIG_HAS_CAMERA
         { .txt = "Scan Oracle QR", .font = GUI_DEFAULT_FONT, .ev_id = BTN_SETTINGS_PINSERVER_SCAN_QR },
 #endif
-        { .txt = "Reset Oracle", .font = GUI_DEFAULT_FONT, .ev_id = BTN_SETTINGS_PINSERVER_RESET } };
+    };
 
     return make_menu_activity("Blind Oracle", hdrbtns, 2, menubtns, sizeof(menubtns) / sizeof(btn_data_t));
 }
@@ -581,7 +585,7 @@ gui_activity_t* make_session_activity(void)
         { .txt = NULL, .font = GUI_DEFAULT_FONT, .ev_id = GUI_BUTTON_EVENT_NONE } };
 
     btn_data_t menubtns[] = { { .txt = "Log Out", .font = GUI_DEFAULT_FONT, .ev_id = BTN_SESSION_LOGOUT }
-#ifndef CONFIG_ETH_USE_OPENETH
+#if !defined(CONFIG_ETH_USE_OPENETH) || defined(CONFIG_BOARD_TYPE_QEMU_M5BASIC)
         ,
         { .txt = "Sleep", .font = GUI_DEFAULT_FONT, .ev_id = BTN_SESSION_SLEEP }
 #endif

@@ -1,0 +1,10 @@
+# Ruby firmware for the real M5Stack Basic Core v2.7 (configs/sdkconfig_ruby_m5basic.defaults).
+#   docker build -f Dockerfile.m5basic -t ruby-m5-fw .
+#   docker create --name x ruby-m5-fw && docker cp x:/jade/build ./build-m5 && docker rm x
+# Flash with esptool (see dist/*/README.txt). No secure boot, no flash encryption, no eFuse is written.
+FROM blockstream/jade_builder@sha256:cbf0aabee7513dc8cad8f1d69a5e00f5b73bcd0965a44254627c0de4bfc8c4f2
+WORKDIR /jade
+COPY . .
+RUN rm -f sdkconfig sdkconfig.defaults && cp configs/sdkconfig_ruby_m5basic.defaults sdkconfig.defaults \
+ && cd /opt/esp/idf && . ./export.sh && cd /jade && idf.py build \
+ && grep -E "BOARD_TYPE_M5_BLACK_GRAY=|CONFIG_BT_ENABLED|CONFIG_HAS_CAMERA|CONFIG_HAS_BATTERY=|CONFIG_SPIRAM=|SECURE_BOOT=|FLASH_ENCRYPTION_ENABLED=" sdkconfig || true

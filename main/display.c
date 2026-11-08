@@ -16,7 +16,7 @@
 
 #if defined(CONFIG_ETH_USE_OPENETH)
 #define BUF_N 1
-#if defined(CONFIG_HAS_CAMERA)
+#if defined(CONFIG_QEMU_WEB_DISPLAY)
 #include "qemu_display.h"
 #endif
 #else
@@ -52,7 +52,7 @@ static inline void draw_bitmap(int x, int y, int w, int h, const uint16_t* color
 {
     // JADE_ASSERT(color_data == &_fg || color_data == disp_buf);
 #if defined(CONFIG_ETH_USE_OPENETH)
-#if defined(CONFIG_HAS_CAMERA)
+#if defined(CONFIG_QEMU_WEB_DISPLAY)
     qemu_draw_bitmap(x, y, w, h, color_data);
 #endif
 #else
@@ -280,7 +280,7 @@ void display_init(TaskHandle_t* gui_h)
     vTaskDelay(100 / portTICK_PERIOD_MS);
 
 #if defined(CONFIG_ETH_USE_OPENETH)
-#if defined(CONFIG_HAS_CAMERA)
+#if defined(CONFIG_QEMU_WEB_DISPLAY)
     qemu_display_init();
 #endif
 #else
@@ -1011,7 +1011,7 @@ void display_picture(const Picture* imgbuf, int x, int y, const dispWin_t* cs)
 void display_flush(void)
 {
 #if defined(CONFIG_ETH_USE_OPENETH)
-#if defined(CONFIG_HAS_CAMERA)
+#if defined(CONFIG_QEMU_WEB_DISPLAY)
     qemu_display_flush();
 #endif
 #else

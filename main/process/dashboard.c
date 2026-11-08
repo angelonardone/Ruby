@@ -240,6 +240,7 @@ bool register_otp_kb_entry(void);
 void show_pinserver_details(void);
 bool handle_update_pinserver_qr(const uint8_t* cbor, const size_t cbor_len);
 bool reset_pinserver(void);
+void allow_remote_oracle(bool allow);
 
 // Bip85
 void handle_bip85_mnemonic();
@@ -1930,7 +1931,11 @@ static void handle_pinserver_scan(void)
         goto cleanup;
     }
 
-    if (!handle_update_pinserver_qr(data, data_len)) {
+    // Ruby: scanning an oracle QR is choosing a remote oracle on Ruby
+    allow_remote_oracle(true);
+    const bool updated = handle_update_pinserver_qr(data, data_len);
+    allow_remote_oracle(false);
+    if (!updated) {
         JADE_LOGD("Failed to persist Oracle details");
         goto cleanup;
     }
@@ -1943,19 +1948,38 @@ cleanup:
 }
 #endif // CONFIG_HAS_CAMERA
 
+// Ruby: back to the default - the oracle of the wallet that uses Ruby (paired when the wallet is created)
 static void handle_pinserver_reset(void)
 {
     if (keychain_has_pin()) {
         // Not allowed if wallet initialised
-        await_error_3("Reset Oracle not", "permitted once", "wallet initialized");
+        await_error_3("Change Oracle not", "permitted once", "wallet initialized");
         return;
     }
 
-    const char* question[] = { "Reset Oracle details", "and certificate?" };
-    if (await_yesno_activity("Reset Oracle", question, 2, false, NULL)) {
+    const char* question[] = { "Use the Oracle of the", "wallet that uses Ruby?" };
+    if (await_yesno_activity("Wallet Oracle", question, 2, false, NULL)) {
+        allow_remote_oracle(false);
         if (!reset_pinserver()) {
             await_error("Error resetting Oracle");
         }
+    }
+}
+
+// Ruby: the only way to a remote oracle - Ruby then accepts the remote oracle details from the app (and shows them
+// to confirm) until it restarts or the wallet oracle is chosen again
+static void handle_pinserver_remote(void)
+{
+    if (keychain_has_pin()) {
+        // Not allowed if wallet initialised
+        await_error_3("Change Oracle not", "permitted once", "wallet initialized");
+        return;
+    }
+
+    const char* question[] = { "Use a remote Oracle", "instead of the wallet?" };
+    if (await_yesno_activity("Remote Oracle", question, 2, false, NULL)) {
+        allow_remote_oracle(true);
+        await_message_3("Now send the remote", "Oracle from the app", "and confirm it here");
     }
 }
 
@@ -2399,6 +2423,10 @@ static void handle_settings(const bool startup_menu)
             handle_pinserver_scan();
             break;
 #endif
+
+        case BTN_SETTINGS_PINSERVER_REMOTE:
+            handle_pinserver_remote();
+            break;
 
         case BTN_SETTINGS_PINSERVER_RESET:
             handle_pinserver_reset();

@@ -129,4 +129,13 @@ void update_aggregate_scripts_flavour(script_flavour_t new_script_flavour, scrip
 // 'ctx' should be a 'client_data_request_t' struct as above
 void client_data_request_reply(const void* ctx, CborEncoder* container);
 
+// Ruby: the blind oracle of Ruby is, by default, the oracle inside the wallet app that uses it (not a server).
+// The wallet pairs Ruby with it by sending only its public key; Ruby keeps this marker as the oracle "url" and
+// passes it back in its oracle requests (".../get_pin", ".../set_pin"). It is never shown and no one connects to it.
+#define RUBY_WALLET_ORACLE_URL "ruby:wallet-oracle"
+
+// Ruby: a remote oracle (url + public key) is accepted only after the user chose it on Ruby (Options > Blind
+// Oracle > Use Remote Oracle), before the wallet is created
+void allow_remote_oracle(bool allow);
+
 #endif /* PROCESS_UTILS_H_ */

@@ -1,7 +1,11 @@
 #ifndef AMALGAMATED_BUILD
 #include "sdkconfig.h"
-#if defined(CONFIG_ETH_USE_OPENETH) && defined(CONFIG_HAS_CAMERA)
+// Ruby: the web display does not need the camera (CONFIG_QEMU_WEB_DISPLAY); the emulated webcam exists only when
+// the emulated board has one (CONFIG_HAS_CAMERA), so the M5Stack Basic emulator has no QR scanning, as the real one
+#if defined(CONFIG_QEMU_WEB_DISPLAY)
+#ifdef CONFIG_HAS_CAMERA
 #include "../camera.h"
+#endif
 #include "../gui.h"
 #include "../jade_assert.h"
 #include "../ui.h"
@@ -13,7 +17,9 @@
 #include <freertos/task.h>
 
 #include "../random.h"
+#ifdef CONFIG_HAS_CAMERA
 #include <esp_camera.h>
+#endif
 #include <esp_http_server.h>
 #include <esp_log.h>
 #include <esp_netif.h>
@@ -21,7 +27,13 @@
 #define QEMU_HTTP_PORT 30122
 #define QEMU_MAX_WS_SIZE (1024 * 16)
 #define DISPLAY_SIZE (CONFIG_DISPLAY_WIDTH * CONFIG_DISPLAY_HEIGHT)
+#ifdef CONFIG_HAS_CAMERA
 #define CAMERA_IMAGE_SIZE (CAMERA_IMAGE_WIDTH * CAMERA_IMAGE_HEIGHT)
+#define WS_PKT_BUF_SIZE (CAMERA_IMAGE_SIZE + 1)
+#else
+// only one-byte commands are received
+#define WS_PKT_BUF_SIZE 16
+#endif
 
 // commands sent
 #define LATEST_DISPLAY 0
@@ -38,12 +50,13 @@
 
 static struct async_resp_arg* resp_arg = NULL;
 static uint8_t* ws_pkt_buf = NULL;
+#ifdef CONFIG_HAS_CAMERA
 static camera_fb_t* camerafb = NULL;
 static uint8_t* camerabuf = NULL;
 static uint32_t cameracounter = 0;
-static bool requires_flush = true;
-
 static QueueHandle_t cameraqueue = NULL;
+#endif
+static bool requires_flush = true;
 
 static color_t* pixels = NULL;
 static uint8_t* packet_payload = NULL;
@@ -53,6 +66,7 @@ struct async_resp_arg {
     int fd;
 };
 
+#ifdef CONFIG_HAS_CAMERA
 esp_err_t __wrap_esp_camera_init(const camera_config_t* config) { return ESP_OK; }
 
 esp_err_t __wrap_esp_camera_deinit()
@@ -107,6 +121,7 @@ void __wrap_esp_camera_fb_return(camera_fb_t* fb)
 {
     // reuse struct and buf until the camera is disabled since we only do one frame
 }
+#endif // CONFIG_HAS_CAMERA
 
 void qemu_draw_bitmap(int x, int y, int w, int h, const uint16_t* color_data)
 {
@@ -178,7 +193,9 @@ static void setup_async_send(httpd_req_t* req)
 static esp_err_t ws_handler(httpd_req_t* req)
 {
     if (req->method == HTTP_GET) {
+#ifdef CONFIG_HAS_CAMERA
         cameracounter = 0;
+#endif
         return ESP_OK;
     }
     setup_async_send(req);
@@ -193,6 +210,10 @@ static esp_err_t ws_handler(httpd_req_t* req)
 
     JADE_ASSERT(ws_pkt_buf);
     JADE_ASSERT(ws_pkt.len > 0);
+    if (ws_pkt.len > WS_PKT_BUF_SIZE) {
+        JADE_LOGE("Unexpected ws frame of len %d", ws_pkt.len);
+        return ESP_FAIL;
+    }
     ws_pkt.payload = ws_pkt_buf;
 
     ret = httpd_ws_recv_frame(req, &ws_pkt, ws_pkt.len);
@@ -237,6 +258,7 @@ static esp_err_t ws_handler(httpd_req_t* req)
         JADE_ASSERT(ws_pkt.len == 1);
         gui_front_click();
         break;
+#ifdef CONFIG_HAS_CAMERA
     case CAMERA_FRAME_INBOUND:
         JADE_ASSERT(ws_pkt.len > 1);
         memcpy(camerabuf + cameracounter, ws_pkt_buf + 1, ws_pkt.len - 1);
@@ -247,6 +269,7 @@ static esp_err_t ws_handler(httpd_req_t* req)
             cameracounter += ws_pkt.len - 1;
         }
         break;
+#endif
     default:
         JADE_LOGE("Unexpected byte %d received by ws client for request len %d", *ws_pkt_buf, ws_pkt.len);
         JADE_ASSERT(false);
@@ -294,8 +317,9 @@ bool qemu_start_display_webserver(void)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.keep_alive_enable = true;
     config.server_port = QEMU_HTTP_PORT;
-    ws_pkt_buf = JADE_MALLOC_PREFER_SPIRAM(CAMERA_IMAGE_SIZE + 1);
+    ws_pkt_buf = JADE_MALLOC_PREFER_SPIRAM(WS_PKT_BUF_SIZE);
 
+#ifdef CONFIG_HAS_CAMERA
     cameraqueue = xQueueCreate(1, sizeof(void*));
     JADE_ASSERT(cameraqueue);
 
@@ -304,6 +328,7 @@ bool qemu_start_display_webserver(void)
 
     camerafb = JADE_MALLOC_PREFER_SPIRAM(sizeof(camera_fb_t));
     camerabuf = JADE_MALLOC_PREFER_SPIRAM(CAMERA_IMAGE_SIZE);
+#endif
 
     if (httpd_start(&server, &config) == ESP_OK) {
         httpd_register_uri_handler(server, &ws);

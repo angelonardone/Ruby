@@ -148,8 +148,9 @@ static void idletimer_task(void* ignore)
                     continue;
                 }
 
-#if defined(CONFIG_DEBUG_UNATTENDED_CI) || defined(CONFIG_ETH_USE_OPENETH)
+#if defined(CONFIG_DEBUG_UNATTENDED_CI) || (defined(CONFIG_ETH_USE_OPENETH) && !defined(CONFIG_BOARD_TYPE_QEMU_M5BASIC))
                 // Don't reboot or power-off in unattended/ci build or in emulator
+                // (Ruby: the M5Stack Basic emulator does as the real board: locks by rebooting on USB power)
                 action = SCREEN_DIMMED;
 #endif
             }

@@ -4,7 +4,7 @@ endif()
 
 if(CONFIG_ETH_USE_OPENETH)
     set(qemudir "qemu")
-    if (CONFIG_HAS_CAMERA)
+    if (CONFIG_QEMU_WEB_DISPLAY)
         set(qemu_display_file ${PROJECT_DIR}/build/display.html.gz ${PROJECT_DIR}/build/jade.png.gz)
     endif()
 endif()
@@ -59,7 +59,8 @@ idf_component_register(SRC_DIRS "."
         EMBED_FILES ${PROJECT_DIR}/pinserver_public_key.pub ${logo_files} ${qemu_display_file})
 
 if(CONFIG_ETH_USE_OPENETH)
-    if (CONFIG_HAS_CAMERA)
+    # Ruby: the web display (page + image) does not depend on the camera; only the webcam wraps do
+    if (CONFIG_QEMU_WEB_DISPLAY)
         add_custom_command(OUTPUT ${PROJECT_DIR}/build/display.html.gz ${PROJECT_DIR}/build/jade.png.gz
              COMMAND sed -e "s/DISPLAY_WIDTH/${CONFIG_DISPLAY_WIDTH}/g" -e "s/DISPLAY_HEIGHT/${CONFIG_DISPLAY_HEIGHT}/g" ${PROJECT_DIR}/main/qemu/${CONFIG_DISPLAY_QEMU_HTML}.html | gzip -k -9 -c > ${PROJECT_DIR}/build/display.html.gz
              COMMAND gzip -k -9 -c ${PROJECT_DIR}/main/qemu/${CONFIG_DISPLAY_QEMU_IMAGE}.png > ${PROJECT_DIR}/build/jade.png.gz
@@ -73,6 +74,8 @@ if(CONFIG_ETH_USE_OPENETH)
 
         set_property(DIRECTORY "${COMPONENT_DIR}" APPEND PROPERTY
                 ADDITIONAL_MAKE_CLEAN_FILES ${PROJECT_DIR}/build/display.html.gz ${PROJECT_DIR}/build/jade.png.gz)
+    endif()
+    if (CONFIG_QEMU_WEB_DISPLAY AND CONFIG_HAS_CAMERA)
         list(APPEND link_options "-Wl,--wrap=esp_camera_init")
         list(APPEND link_options "-Wl,--wrap=esp_camera_deinit")
         list(APPEND link_options "-Wl,--wrap=esp_camera_fb_get")

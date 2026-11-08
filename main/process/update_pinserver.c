@@ -23,6 +23,12 @@ extern const uint8_t server_public_key_start[] asm("_binary_pinserver_public_key
 static const char URL_PROTOCOL_HTTP[] = { 'h', 't', 't', 'p', ':', '/', '/' };
 static const char URL_PROTOCOL_HTTPS[] = { 'h', 't', 't', 'p', 's', ':', '/', '/' };
 
+// Ruby: a remote oracle needs the user's choice on Ruby (Options > Blind Oracle > Use Remote Oracle); the choice
+// lasts until a remote oracle is set, the wallet oracle is chosen again, or Ruby restarts
+static volatile bool remote_oracle_allowed = false;
+
+void allow_remote_oracle(const bool allow) { remote_oracle_allowed = allow; }
+
 #define PROTOCOL_IS(protocol, url, len) (len > sizeof(protocol) && !strncmp(url, protocol, sizeof(protocol)))
 #define VALID_PROTOCOL(url, len) (PROTOCOL_IS(URL_PROTOCOL_HTTP, url, len) || PROTOCOL_IS(URL_PROTOCOL_HTTPS, url, len))
 
@@ -39,9 +45,21 @@ void show_pinserver_details(void)
     const bool have_urlB = storage_get_pinserver_urlB(urlB, sizeof(urlB), &urlB_len) && urlB_len;
     const bool have_cert = storage_get_pinserver_cert(cert, sizeof(cert), &cert_len) && cert_len;
 
-    // If no pinserver set, show the help screen
+    // Ruby: the default is the oracle of the wallet that uses Ruby
     if (!have_pubkey && !have_urlA && !have_urlB && !have_cert) {
-        await_message("Custom Oracle not set");
+        await_message_3("Oracle: the wallet", "that uses Ruby", "(not paired yet)");
+        return;
+    }
+    if (have_urlA && !strcmp(urlA, RUBY_WALLET_ORACLE_URL)) {
+        char key_start[16] = { 0 };
+        if (have_pubkey) {
+            char* pubkey_hex = NULL;
+            JADE_WALLY_VERIFY(wally_hex_from_bytes(pubkey, sizeof(pubkey), &pubkey_hex));
+            const int ret = snprintf(key_start, sizeof(key_start), "Key %.8s...", pubkey_hex);
+            JADE_ASSERT(ret > 0 && ret < sizeof(key_start));
+            JADE_WALLY_VERIFY(wally_free_string(pubkey_hex));
+        }
+        await_message_3("Oracle: the wallet", "that uses Ruby", key_start);
         return;
     }
 
@@ -112,14 +130,23 @@ int update_pinserver(const CborValue* const params, const char** errmsg)
         goto cleanup;
     }
     if (pubkey) {
-        if (!urlA_len) {
-            *errmsg = "Cannot set pubkey without URL";
-            goto cleanup;
-        }
         if (pubkey_len != EC_PUBLIC_KEY_LEN || wally_ec_public_key_verify(pubkey, pubkey_len) != WALLY_OK) {
             *errmsg = "Invalid Oracle pubkey";
             goto cleanup;
         }
+    }
+
+    // Ruby: only the pubkey (no url) = pair with the oracle of the wallet app that sends it (the default oracle)
+    const bool wallet_oracle = pubkey && !urlA_len;
+    if (wallet_oracle && (rpc_has_field_data("certificate", params) || rpc_get_bool_or("reset_certificate", params, false))) {
+        *errmsg = "The wallet Oracle has no certificate";
+        goto cleanup;
+    }
+
+    // Ruby: a remote oracle (a url) only when the user chose it on Ruby
+    if (urlA_len && !remote_oracle_allowed) {
+        *errmsg = "Choose Use Remote Oracle on Ruby first";
+        goto cleanup;
     }
 
     uint8_t stored_pubkey[EC_PUBLIC_KEY_LEN];
@@ -139,6 +166,32 @@ int update_pinserver(const CborValue* const params, const char** errmsg)
 
     const storage_pin_privkey_action_t privkey_action
         = pubkey_changed ? STORAGE_PIN_ERASE_PRIVKEY : STORAGE_PIN_KEEP_PRIVKEY;
+
+    // Ruby: pairing with the wallet oracle asks nothing - it is the default, and it is possible only while Ruby has no
+    // PIN (checked above when the key changes). The marker url stands for the wallet; there is no second url.
+    if (wallet_oracle) {
+        // With a PIN, never move from a remote oracle (the user's choice) to the wallet, even with the same key
+        char stored_urlA[MAX_PINSVR_URL_LENGTH] = { 0 };
+        size_t stored_urlA_len = 0;
+        const bool remote_now = storage_get_pinserver_urlA(stored_urlA, sizeof(stored_urlA), &stored_urlA_len)
+            && stored_urlA_len > 1 && strcmp(stored_urlA, RUBY_WALLET_ORACLE_URL);
+        if (remote_now && keychain_has_pin()) {
+            *errmsg = "Cannot update initialized unit";
+            goto cleanup;
+        }
+
+        JADE_LOGI("Pairing with the wallet oracle");
+        allow_remote_oracle(false);
+        if (!storage_set_pinserver_details(RUBY_WALLET_ORACLE_URL, "", pubkey, pubkey_len, privkey_action)
+            || !storage_erase_pinserver_cert()) {
+            JADE_LOGE("Failed to persist wallet oracle details");
+            *errmsg = "Failed to persist Oracle details";
+            retval = CBOR_RPC_INTERNAL_ERROR;
+            goto cleanup;
+        }
+        retval = 0;
+        goto cleanup;
+    }
 
     if (urlA_len) {
         char* pubkey_hex = NULL;
@@ -160,8 +213,8 @@ int update_pinserver(const CborValue* const params, const char** errmsg)
             goto cleanup;
         }
     } else if (reset_details) {
-        const char* message[] = { "Reset Oracle details?" };
-        if (!await_yesno_activity("Reset Oracle", message, 1, false, NULL)) {
+        const char* message[] = { "Forget this Oracle and", "use the wallet Oracle?" };
+        if (!await_yesno_activity("Wallet Oracle", message, 2, false, NULL)) {
             JADE_LOGW("User declined to confirm resetting pinserver details");
             *errmsg = "User declined to confirm resetting Oracle details";
             retval = CBOR_RPC_USER_CANCELLED;
@@ -249,7 +302,8 @@ int update_pinserver(const CborValue* const params, const char** errmsg)
         }
     }
 
-    // ok - all good
+    // ok - all good (Ruby: the remote oracle choice is used once)
+    allow_remote_oracle(false);
     retval = 0;
 
 cleanup:

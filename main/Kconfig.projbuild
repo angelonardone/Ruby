@@ -126,11 +126,20 @@ menu "Blockstream Jade"
         config BOARD_TYPE_QEMU_LARGER
             bool "qemu display via websocket with a larger display"
         config BOARD_TYPE_QEMU_M5BASIC
-            bool "qemu display via websocket with the M5Stack Basic layout (320x240, three buttons)"
+            bool "qemu emulation of the M5Stack Basic (320x240, three buttons, battery, no camera)"
+            select HAS_BATTERY
         config BOARD_TYPE_CUSTOM
             bool "Custom board"
             select CUSTOM_PINS
     endchoice
+
+    config QEMU_WEB_DISPLAY
+        bool "qemu: show the display (and take the buttons) in a web browser"
+        depends on ETH_USE_OPENETH
+        default n
+        help
+            Ruby: the web display does not imply a camera. The emulated webcam exists only with HAS_CAMERA,
+            so an emulated board without camera (the M5Stack Basic) has no QR scanning, as the real board.
 
     config DISPLAY_QEMU_IMAGE
         depends on BOARD_TYPE_QEMU || BOARD_TYPE_QEMU_LARGER || BOARD_TYPE_QEMU_M5BASIC
@@ -369,7 +378,7 @@ menu "Blockstream Jade"
         bool "Enable Camera Functions"
         help
             Enables camera functionality
-            default y if BOARD_TYPE_JADE_V1_ANY || BOARD_TYPE_JADE_V2 || (ETH_USE_OPENETH && HTTPD_WS_SUPPORT) || BOARD_TYPE_M5_CORES3 || BOARD_TYPE_TTGO_TDISPLAYS3PROCAMERA || BOARD_TYPE_WS_TOUCH_LCD2
+            default y if BOARD_TYPE_JADE_V1_ANY || BOARD_TYPE_JADE_V2 || (QEMU_WEB_DISPLAY && !BOARD_TYPE_QEMU_M5BASIC) || BOARD_TYPE_M5_CORES3 || BOARD_TYPE_TTGO_TDISPLAYS3PROCAMERA || BOARD_TYPE_WS_TOUCH_LCD2
 
     menu "Camera Orientation"
         visible if HAS_CAMERA && BOARD_TYPE_CUSTOM

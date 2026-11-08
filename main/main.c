@@ -35,7 +35,7 @@
 #include "serial.h"
 #include "wifi.h"
 #ifdef CONFIG_ETH_USE_OPENETH
-#ifdef CONFIG_HAS_CAMERA
+#ifdef CONFIG_QEMU_WEB_DISPLAY
 #include "qemu_display.h"
 #endif
 #include "qemu_tcp.h"
@@ -241,7 +241,7 @@ static void boot_process(void)
         JADE_LOGI("Failed to start qemu tcp handler");
         JADE_ABORT();
     }
-#ifdef CONFIG_HAS_CAMERA
+#ifdef CONFIG_QEMU_WEB_DISPLAY
     if (!qemu_start_display_webserver()) {
         JADE_LOGI("Failed to start qemu web display");
         JADE_ABORT();

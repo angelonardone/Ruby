@@ -16,7 +16,7 @@ PSRAM=""
 UNAMALGAMATED=""
 WEBDISPLAY=""
 WEBDISPLAY_LARGER=""
-WEBDISPLAY_M5BASIC=""
+M5BASIC=""
 SKIP_RECONFIGURE=""
 
 function usage {
@@ -37,7 +37,8 @@ function usage {
     echo "    --psram      Emulate a device with PSRAM support"
     echo "    --webdisplay Provide a device display using a web browser"
     echo "    --webdisplay-larger Provide a larger device display for --webdisplay"
-    echo "    --webdisplay-m5basic Provide an M5Stack Basic display (320x240, buttons A/B/C) for --webdisplay"
+    echo "    --m5basic    Emulate the M5Stack Basic board (320x240, buttons A/B/C, battery, no camera) - as the real one"
+    echo "    --webdisplay-m5basic Same as --webdisplay --m5basic"
     echo "COMMON OPTIONS:"
     echo "    --dev        Development (non-production) device (mandatory for qemu)"
     echo "    --ci         Automatically execute the default UX action for CI testing"
@@ -105,7 +106,8 @@ while true; do
         --unamalgamated) UNAMALGAMATED=1; shift ;;
         --webdisplay) WEBDISPLAY=1; shift ;;
         --webdisplay-larger) WEBDISPLAY=1; WEBDISPLAY_LARGER=1; shift ;;
-        --webdisplay-m5basic) WEBDISPLAY=1; WEBDISPLAY_M5BASIC=1; shift ;;
+        --m5basic) M5BASIC=1; shift ;;
+        --webdisplay-m5basic) WEBDISPLAY=1; M5BASIC=1; shift ;;
         --skip-reconfigure) SKIP_RECONFIGURE=1; shift ;;
         -h | --help) usage ;;
         "") break ;;
@@ -126,8 +128,8 @@ if [ "$CONFIG" = "qemu" ]; then
     fi
 else
     # Jade v1.0, 1.1, or 2.0
-    if [ -n "$PSRAM" ] || [ -n "$WEBDISPLAY" ]; then
-        usage "--[psram|webdisplay|webdisplay-larger] must not be given for non-qemu"
+    if [ -n "$PSRAM" ] || [ -n "$WEBDISPLAY" ] || [ -n "$M5BASIC" ]; then
+        usage "--[psram|webdisplay|webdisplay-larger|m5basic] must not be given for non-qemu"
     fi
 fi
 
@@ -299,7 +301,11 @@ if [ -n "$PSRAM" ]; then
         # add settings
         set_config CONFIG_ESP_BROWNOUT_DET n
         set_config CONFIG_ESP_INT_WDT n
-        set_config CONFIG_HAS_CAMERA y
+        set_config CONFIG_QEMU_WEB_DISPLAY y
+        # Ruby: the emulated webcam only for boards with a camera (not the M5Stack Basic)
+        if [ -z "$M5BASIC" ]; then
+            set_config CONFIG_HAS_CAMERA y
+        fi
         set_config CONFIG_HTTPD_MAX_REQ_HDR_LEN 4096
         set_config CONFIG_HTTPD_WS_SUPPORT y
     fi
@@ -310,13 +316,14 @@ if [ -n "$PSRAM" ]; then
         # remove settings
         remove_config CONFIG_BOARD_TYPE_QEMU
     fi
-    if [ -n "$WEBDISPLAY_M5BASIC" ]; then
-        echo "updating config file for M5Stack Basic webdisplay build ..."
-        # add settings
-        set_config CONFIG_BOARD_TYPE_QEMU_M5BASIC y
-        # remove settings
-        remove_config CONFIG_BOARD_TYPE_QEMU
-    fi
+fi
+if [ -n "$M5BASIC" ]; then
+    # Ruby: the emulator runs the code of the real M5Stack Basic: same layout and buttons, battery (emulated IP5306),
+    # no camera (no QR), no Bluetooth (as configs/sdkconfig_ruby_m5basic.defaults, the real board build)
+    echo "updating config file for M5Stack Basic emulation ..."
+    set_config CONFIG_BOARD_TYPE_QEMU_M5BASIC y
+    set_config CONFIG_HAS_CAMERA n
+    remove_config CONFIG_BOARD_TYPE_QEMU
 fi
 if [ -n "$UNAMALGAMATED" ]; then
     echo "updating config file for unamalgamated build ..."

@@ -17,9 +17,10 @@
 
 #include "process_utils.h"
 
-// Default pinserver url, onion, and public key
-static const char PINSERVER_URL[] = "https://j8d.io";
-static const char PINSERVER_ONION[] = "http://mrrxtq6tjpbnbm7vh5jt6mpjctn7ggyfy5wegvbeff3x7jrznqawlmid.onion";
+// Default pinserver url and public key
+// Ruby: there is no public oracle server - the default is the oracle of the wallet app that uses Ruby (one url, the
+// RUBY_WALLET_ORACLE_URL marker, and no second url) - see update_pinserver.c
+static const char PINSERVER_URL[] = RUBY_WALLET_ORACLE_URL;
 extern const uint8_t server_public_key_start[] asm("_binary_pinserver_public_key_pub_start");
 
 // Pinserver documents to post to
@@ -98,14 +99,14 @@ static void send_http_request_reply(jade_process_t* process, const char* documen
         pin_data.urls[pin_data.num_urls++] = urlA;
     }
 
-    // Add second URL (defaults to h/coded onion)
+    // Add second URL (Ruby: none by default)
     size_t urlB_len = 0;
     const bool urlBSet = storage_get_pinserver_urlB(urlbuf, sizeof(urlbuf), &urlB_len);
-    if (urlBSet && urlB_len <= 1) {
+    if (!urlBSet || urlB_len <= 1) {
         // Explicitly no second url
         urlB[0] = '\0';
     } else {
-        urlB_len = snprintf(urlB, sizeof(urlB), "%s/%s", urlBSet ? urlbuf : PINSERVER_ONION, document);
+        urlB_len = snprintf(urlB, sizeof(urlB), "%s/%s", urlbuf, document);
         JADE_ASSERT(urlB_len > 0 && urlB_len < sizeof(urlB));
         pin_data.urls[pin_data.num_urls++] = urlB;
     }
