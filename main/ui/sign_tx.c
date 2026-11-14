@@ -412,4 +412,47 @@ bool show_btc_final_confirmation_activity(const network_t network_id, const uint
     return show_final_confirmation_activity("Send Transaction", feeamount, TICKER_BTC, warning_msg);
 }
 
+// Ruby: a group payment signed at several fees (the last signer of the group chooses which one is sent).
+// One screen lists every fee: X declines all of them, the tick signs all of them.
+bool show_btc_fee_options_confirmation_activity(const network_t network_id, const uint64_t* fees, const size_t num_fees)
+{
+    JADE_ASSERT(network_id != NETWORK_NONE);
+    JADE_ASSERT(fees);
+    JADE_ASSERT(num_fees > 1 && num_fees <= 4);
+
+    char title[24];
+    int ret = snprintf(title, sizeof(title), "Sign %u Fees", (unsigned)num_fees);
+    JADE_ASSERT(ret > 0 && ret < sizeof(title));
+
+    char lines[4][40];
+    btn_data_t menubtns[4];
+    for (size_t i = 0; i < num_fees; ++i) {
+        if (i == 0) {
+            ret = snprintf(lines[i], sizeof(lines[i]), "%.08f %s", 1.0 * fees[i] / 1e8, TICKER_BTC);
+        } else {
+            // the percentage above the first fee, rounded
+            const uint64_t pct = fees[0] ? ((fees[i] - fees[0]) * 100 + fees[0] / 2) / fees[0] : 0;
+            ret = snprintf(
+                lines[i], sizeof(lines[i]), "%.08f %s +%u%%", 1.0 * fees[i] / 1e8, TICKER_BTC, (unsigned)pct);
+        }
+        JADE_ASSERT(ret > 0 && ret < sizeof(lines[i]));
+        menubtns[i] = (btn_data_t){ .txt = lines[i], .font = GUI_DEFAULT_FONT, .ev_id = GUI_BUTTON_EVENT_NONE };
+    }
+
+    btn_data_t hdrbtns[] = { { .txt = "X", .font = GUI_TITLE_FONT, .ev_id = BTN_SIGNTX_REJECT },
+        { .txt = "S", .font = VARIOUS_SYMBOLS_FONT, .ev_id = BTN_SIGNTX_ACCEPT /**/ BTN_IS_CRITICAL } };
+
+    gui_activity_t* const act = make_menu_activity(title, hdrbtns, 2, menubtns, num_fees);
+    while (true) {
+        gui_set_current_activity(act);
+        const int32_t ev_id = gui_activity_wait_button(act, BTN_SIGNTX_ACCEPT);
+        if (ev_id == BTN_SIGNTX_REJECT) {
+            return false;
+        }
+        if (ev_id == BTN_SIGNTX_ACCEPT) {
+            return true;
+        }
+    }
+}
+
 #endif // AMALGAMATED_BUILD

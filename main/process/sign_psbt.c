@@ -20,12 +20,151 @@
 
 #include <sodium/utils.h>
 
+#include <wally_crypto.h>
 #include <wally_map.h>
 #include <wally_psbt.h>
 #include <wally_psbt_members.h>
 #include <wally_script.h>
 
 #include "sign_utils.h"
+
+bool deserialise_psbt(const uint8_t* bytes, size_t bytes_len, struct wally_psbt** psbt_out);
+
+// Ruby - group payments with pre-signed fee levels (DistributedCryptography, 2026-11-13).
+// The member who starts a group payment signs the same payment once per fee option, so that the last signer can
+// choose which one is sent. Instead of one confirmation per transaction, the first 'sign_psbt' carries the other fee
+// levels ('fee_options': an array of psbt bytes): Ruby shows the payment once with every fee and, when the user
+// accepts, keeps the txid and the fee of each other transaction. Each of them is then signed by its own 'sign_psbt',
+// with every check done again and without asking, only if: its txid was approved, its fee is the fee shown, and it
+// pays exactly what the user saw (every other output must be verified change). Single use, 10 minutes.
+#define MAX_FEE_OPTIONS 4
+#define FEE_OPTIONS_LIFETIME_MS (10 * 60 * 1000)
+typedef struct {
+    uint8_t txids[MAX_FEE_OPTIONS][WALLY_TXHASH_LEN];
+    uint64_t fees[MAX_FEE_OPTIONS];
+    size_t count;
+    network_t network_id;
+    uint8_t spend_hash[SHA256_LEN];
+    TickType_t expires;
+} fee_options_approval_t;
+static fee_options_approval_t fee_options_approval;
+
+// Hash of what the user is shown as paid: every output not flagged as change (script and amount, in order)
+static bool hash_spend_outputs(const struct wally_tx* tx, const output_info_t* outinfo, uint8_t* hash, size_t hash_len)
+{
+    JADE_ASSERT(tx);
+    JADE_ASSERT(outinfo);
+    JADE_ASSERT(hash_len == SHA256_LEN);
+    size_t len = 0;
+    for (size_t i = 0; i < tx->num_outputs; ++i) {
+        if (!(outinfo[i].flags & OUTPUT_FLAG_CHANGE)) {
+            len += sizeof(uint32_t) + tx->outputs[i].script_len + sizeof(uint64_t);
+        }
+    }
+    uint8_t* const buf = JADE_MALLOC(len ? len : 1);
+    uint8_t* p = buf;
+    for (size_t i = 0; i < tx->num_outputs; ++i) {
+        if (!(outinfo[i].flags & OUTPUT_FLAG_CHANGE)) {
+            const uint32_t script_len = (uint32_t)tx->outputs[i].script_len;
+            memcpy(p, &script_len, sizeof(script_len));
+            p += sizeof(script_len);
+            memcpy(p, tx->outputs[i].script, script_len);
+            p += script_len;
+            memcpy(p, &tx->outputs[i].satoshi, sizeof(uint64_t));
+            p += sizeof(uint64_t);
+        }
+    }
+    const bool ok = wally_sha256(buf, len, hash, hash_len) == WALLY_OK;
+    free(buf);
+    return ok;
+}
+
+// A transaction approved with its fee options: true once (the approval of that txid is used up)
+static bool take_fee_option_approval(
+    const network_t network_id, const uint8_t* txid, const uint64_t fee, const uint8_t* spend_hash)
+{
+    fee_options_approval_t* const a = &fee_options_approval;
+    if (!a->count || a->network_id != network_id || (int32_t)(xTaskGetTickCount() - a->expires) > 0
+        || sodium_memcmp(a->spend_hash, spend_hash, SHA256_LEN)) {
+        return false;
+    }
+    for (size_t i = 0; i < a->count; ++i) {
+        if (!sodium_memcmp(a->txids[i], txid, WALLY_TXHASH_LEN) && a->fees[i] == fee) {
+            // used up: move the last one here
+            --a->count;
+            memcpy(a->txids[i], a->txids[a->count], WALLY_TXHASH_LEN);
+            a->fees[i] = a->fees[a->count];
+            return true;
+        }
+    }
+    return false;
+}
+
+// The other fee levels of this payment: they must spend exactly the same coins. Their txids and fees are returned.
+static bool get_fee_options(CborValue* params, const struct wally_tx* tx, uint8_t txids[][WALLY_TXHASH_LEN],
+    uint64_t* fees, size_t max_options, size_t* num_options, const char** errmsg)
+{
+    JADE_ASSERT(params);
+    JADE_ASSERT(tx);
+    JADE_INIT_OUT_SIZE(num_options);
+    JADE_INIT_OUT_PPTR(errmsg);
+
+    CborValue array;
+    size_t num_items = 0;
+    if (!rpc_get_array("fee_options", params, &array, &num_items) || !num_items || num_items > max_options) {
+        *errmsg = "Invalid fee options";
+        return false;
+    }
+    CborValue item;
+    if (cbor_value_enter_container(&array, &item) != CborNoError) {
+        *errmsg = "Invalid fee options";
+        return false;
+    }
+    for (size_t n = 0; n < num_items; ++n) {
+        const uint8_t* bytes = NULL;
+        size_t bytes_len = 0;
+        rpc_get_raw_bytes_ptr(&item, &bytes, &bytes_len);
+        struct wally_psbt* psbt = NULL;
+        if (!bytes || !bytes_len || !deserialise_psbt(bytes, bytes_len, &psbt)) {
+            *errmsg = "Invalid fee option psbt";
+            return false;
+        }
+        struct wally_tx* otx = NULL;
+        if (psbt->version == WALLY_PSBT_VERSION_0) {
+            otx = psbt->tx;
+        } else if (wally_psbt_extract(psbt, WALLY_PSBT_EXTRACT_NON_FINAL, &otx) != WALLY_OK) {
+            otx = NULL;
+        }
+        uint64_t in = 0, out = 0;
+        bool ok = otx && otx->num_inputs == tx->num_inputs && psbt->num_inputs == tx->num_inputs;
+        for (size_t i = 0; ok && i < tx->num_inputs; ++i) {
+            const struct wally_tx_output* utxo = NULL;
+            ok = !memcmp(otx->inputs[i].txhash, tx->inputs[i].txhash, WALLY_TXHASH_LEN)
+                && otx->inputs[i].index == tx->inputs[i].index
+                && wally_psbt_get_input_best_utxo(psbt, i, &utxo) == WALLY_OK && utxo
+                && checked_add_uint64(in, utxo->satoshi, &in);
+        }
+        ok = ok && wally_tx_get_total_output_satoshi(otx, &out) == WALLY_OK && out <= in;
+        if (ok) {
+            fees[n] = in - out;
+            JADE_WALLY_VERIFY(wally_tx_get_txid(otx, txids[n], WALLY_TXHASH_LEN));
+        }
+        if (otx && psbt->version != WALLY_PSBT_VERSION_0) {
+            JADE_WALLY_VERIFY(wally_tx_free(otx));
+        }
+        JADE_WALLY_VERIFY(wally_psbt_free(psbt));
+        if (!ok) {
+            *errmsg = "A fee option does not spend the same coins";
+            return false;
+        }
+        if (cbor_value_advance(&item) != CborNoError) {
+            *errmsg = "Invalid fee options";
+            return false;
+        }
+    }
+    *num_options = num_items;
+    return true;
+}
 
 // From https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki
 static const uint8_t PSBT_MAGIC_PREFIX[5] = { 0x70, 0x73, 0x62, 0x74, 0xFF }; // 'psbt' + 0xff
@@ -867,22 +1006,64 @@ int sign_psbt(jade_process_t* process, CborValue* params, const network_t networ
         goto cleanup;
     }
 
-    if (!show_btc_transaction_outputs_activity(network_id, tx, output_info)) {
-        *errmsg = "User declined to sign psbt";
-        retval = CBOR_RPC_USER_CANCELLED;
-        goto cleanup;
-    }
-    JADE_LOGD("User accepted outputs");
+    {
+        // Ruby: fee options of a group payment (see fee_options_approval)
+        uint8_t txid[WALLY_TXHASH_LEN];
+        uint8_t spend_hash[SHA256_LEN];
+        const uint64_t fee = input_amount - output_amount;
+        JADE_WALLY_VERIFY(wally_tx_get_txid(tx, txid, sizeof(txid)));
+        if (!hash_spend_outputs(tx, output_info, spend_hash, sizeof(spend_hash))) {
+            *errmsg = "Failed to hash the outputs";
+            retval = CBOR_RPC_INTERNAL_ERROR;
+            goto cleanup;
+        }
 
-    // User to agree fee amount
-    // Check to see whether user accepted or declined
-    if (!show_btc_fee_confirmation_activity(
-            network_id, tx, output_info, aggregate_inputs_scripts_flavour, input_amount, output_amount)) {
-        *errmsg = "User declined to sign psbt";
-        retval = CBOR_RPC_USER_CANCELLED;
-        goto cleanup;
+        if (take_fee_option_approval(network_id, txid, fee, spend_hash)) {
+            // Approved with the first transaction of this payment: no screen
+            JADE_LOGI("Fee option approved with its payment - signing without asking again");
+        } else {
+            uint8_t option_txids[MAX_FEE_OPTIONS - 1][WALLY_TXHASH_LEN];
+            uint64_t fees[MAX_FEE_OPTIONS];
+            size_t num_options = 0;
+            fees[0] = fee;
+            if (params && rpc_has_field_data("fee_options", params)
+                && !get_fee_options(
+                    params, tx, option_txids, fees + 1, MAX_FEE_OPTIONS - 1, &num_options, errmsg)) {
+                retval = CBOR_RPC_BAD_PARAMETERS;
+                goto cleanup;
+            }
+
+            if (!show_btc_transaction_outputs_activity(network_id, tx, output_info)) {
+                fee_options_approval.count = 0;
+                *errmsg = "User declined to sign psbt";
+                retval = CBOR_RPC_USER_CANCELLED;
+                goto cleanup;
+            }
+            JADE_LOGD("User accepted outputs");
+
+            const bool accepted = num_options
+                ? show_btc_fee_options_confirmation_activity(network_id, fees, num_options + 1)
+                : show_btc_fee_confirmation_activity(
+                      network_id, tx, output_info, aggregate_inputs_scripts_flavour, input_amount, output_amount);
+            if (!accepted) {
+                fee_options_approval.count = 0;
+                *errmsg = "User declined to sign psbt";
+                retval = CBOR_RPC_USER_CANCELLED;
+                goto cleanup;
+            }
+            JADE_LOGD("User accepted fee");
+
+            // Keep the approval of the other fee options (replaces any older one)
+            fee_options_approval.count = num_options;
+            fee_options_approval.network_id = network_id;
+            memcpy(fee_options_approval.spend_hash, spend_hash, sizeof(spend_hash));
+            for (size_t i = 0; i < num_options; ++i) {
+                memcpy(fee_options_approval.txids[i], option_txids[i], WALLY_TXHASH_LEN);
+                fee_options_approval.fees[i] = fees[i + 1];
+            }
+            fee_options_approval.expires = xTaskGetTickCount() + pdMS_TO_TICKS(FEE_OPTIONS_LIFETIME_MS);
+        }
     }
-    JADE_LOGD("User accepted fee");
 
     // Show warning if nothing to sign
     if (!signing_flags) {
