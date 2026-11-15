@@ -7,8 +7,46 @@
 #include "jade_wally_verify.h"
 #include "util.h"
 
+#include <wally_crypto.h>
 #include <wally_map.h>
 #include <wally_psbt.h>
+#include <wally_script.h>
+
+// Ruby: an input spent by the key path of a taproot output that also commits to scripts (merkle root present).
+// True only if: one key, no leaf hashes for it, a 32-byte merkle root, and the coin spent is the P2TR of that key
+// tweaked with that merkle root (BIP341).
+static bool key_iter_is_taproot_keypath_with_scripts(
+    const key_iter* iter, const struct wally_map* keypaths, const struct wally_map_item* merkle_root)
+{
+    JADE_ASSERT(iter && iter->is_input);
+    if (keypaths->num_items != 1 || !merkle_root->value || merkle_root->value_len != SHA256_LEN) {
+        return false;
+    }
+    const struct wally_psbt_input* input = &iter->psbt->inputs[iter->index];
+    const struct wally_map_item* key = &keypaths->items[0];
+    if (!key->key || key->key_len != EC_XONLY_PUBLIC_KEY_LEN) {
+        return false;
+    }
+    // A leaf hash for the key means it signs a script, not the key path
+    for (size_t i = 0; i < input->taproot_leaf_hashes.num_items; ++i) {
+        if (input->taproot_leaf_hashes.items[i].value_len) {
+            return false;
+        }
+    }
+    const struct wally_tx_output* utxo = NULL;
+    if (wally_psbt_get_input_best_utxo(iter->psbt, iter->index, &utxo) != WALLY_OK || !utxo || !utxo->script
+        || utxo->script_len != 2 + EC_XONLY_PUBLIC_KEY_LEN || utxo->script[0] != OP_1
+        || utxo->script[1] != EC_XONLY_PUBLIC_KEY_LEN) {
+        return false;
+    }
+    uint8_t tweaked[EC_PUBLIC_KEY_LEN];
+    if (wally_ec_public_key_bip341_tweak(
+            key->key, key->key_len, merkle_root->value, merkle_root->value_len, 0, tweaked, sizeof(tweaked))
+        != WALLY_OK) {
+        return false;
+    }
+    return !memcmp(tweaked + 1, utxo->script + 2, EC_XONLY_PUBLIC_KEY_LEN);
+}
 
 // Ensure a taproot input/output is single-key and keypath-only
 // (until taproots with scripts are supported)
@@ -24,8 +62,14 @@ static bool key_iter_is_supported_taproot(const key_iter* iter, const struct wal
         }
         // TODO: use the wally merkle root accessor when it is exposed
         const uint32_t psbt_in_tap_merkle_root = 0x18; // From BIP-174
-        if (wally_map_get_integer(&input->psbt_fields, psbt_in_tap_merkle_root)) {
-            return false; // Merkle root present: script-path present
+        const struct wally_map_item* merkle_root
+            = wally_map_get_integer(&input->psbt_fields, psbt_in_tap_merkle_root);
+        if (merkle_root) {
+            // Ruby: the KEY PATH of an output that also has scripts (the owner of a Delegated group spends alone,
+            // BIP341: output key = our key tweaked with the merkle root of the scripts). Accepted only when it is
+            // really that: one key, no leaf hash for it, and the coin spent pays to exactly our key tweaked with
+            // this merkle root. Wally signs with the same tweak.
+            return key_iter_is_taproot_keypath_with_scripts(iter, keypaths, merkle_root);
         }
     } else {
         const struct wally_psbt_output* output = &iter->psbt->outputs[iter->index];
