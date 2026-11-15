@@ -37,11 +37,16 @@ bool deserialise_psbt(const uint8_t* bytes, size_t bytes_len, struct wally_psbt*
 // accepts, keeps the txid and the fee of each other transaction. Each of them is then signed by its own 'sign_psbt',
 // with every check done again and without asking, only if: its txid was approved, its fee is the fee shown, and it
 // pays exactly what the user saw (every other output must be verified change). Single use, 10 minutes.
+// 2026-11-15: a fee option may also be approved when the change is NOT recognised (a Taproot group's change, shown
+// on Ruby): if it pays exactly the outputs of the payment shown except that ONE of them gets less (or is dropped,
+// a change below the dust limit), by exactly the extra fee. Nothing then goes anywhere the user did not see, nobody
+// gets more than shown, and the difference is the fee the user approved with the others ('fee_only').
 #define MAX_FEE_OPTIONS 4
 #define FEE_OPTIONS_LIFETIME_MS (10 * 60 * 1000)
 typedef struct {
     uint8_t txids[MAX_FEE_OPTIONS][WALLY_TXHASH_LEN];
     uint64_t fees[MAX_FEE_OPTIONS];
+    bool fee_only[MAX_FEE_OPTIONS];
     size_t count;
     network_t network_id;
     uint8_t spend_hash[SHA256_LEN];
@@ -84,25 +89,78 @@ static bool take_fee_option_approval(
     const network_t network_id, const uint8_t* txid, const uint64_t fee, const uint8_t* spend_hash)
 {
     fee_options_approval_t* const a = &fee_options_approval;
-    if (!a->count || a->network_id != network_id || (int32_t)(xTaskGetTickCount() - a->expires) > 0
-        || sodium_memcmp(a->spend_hash, spend_hash, SHA256_LEN)) {
+    if (!a->count || a->network_id != network_id || (int32_t)(xTaskGetTickCount() - a->expires) > 0) {
         return false;
     }
+    const bool same_spend = !sodium_memcmp(a->spend_hash, spend_hash, SHA256_LEN);
     for (size_t i = 0; i < a->count; ++i) {
-        if (!sodium_memcmp(a->txids[i], txid, WALLY_TXHASH_LEN) && a->fees[i] == fee) {
+        // the txid binds the outputs checked when it was approved ('fee_only'), or they must be the ones shown
+        if (!sodium_memcmp(a->txids[i], txid, WALLY_TXHASH_LEN) && a->fees[i] == fee && (same_spend || a->fee_only[i])) {
             // used up: move the last one here
             --a->count;
             memcpy(a->txids[i], a->txids[a->count], WALLY_TXHASH_LEN);
             a->fees[i] = a->fees[a->count];
+            a->fee_only[i] = a->fee_only[a->count];
             return true;
         }
     }
     return false;
 }
 
+static bool same_output(const struct wally_tx_output* a, const struct wally_tx_output* b)
+{
+    return a->satoshi == b->satoshi && a->script_len == b->script_len
+        && (!a->script_len || !memcmp(a->script, b->script, a->script_len));
+}
+
+// Ruby: true if 'option' pays exactly the outputs of 'base' (same order) except that ONE output gets less, or is
+// dropped, by exactly 'fee_increase' (see 'fee_only' above)
+static bool fee_option_takes_from_one_output(
+    const struct wally_tx* base, const struct wally_tx* option, const uint64_t fee_increase)
+{
+    if (!fee_increase) {
+        return false;
+    }
+    if (option->num_outputs == base->num_outputs) {
+        size_t changed = 0;
+        uint64_t taken = 0;
+        for (size_t i = 0; i < base->num_outputs; ++i) {
+            const struct wally_tx_output* b = &base->outputs[i];
+            const struct wally_tx_output* o = &option->outputs[i];
+            if (b->script_len != o->script_len || (b->script_len && memcmp(b->script, o->script, b->script_len))
+                || o->satoshi > b->satoshi) {
+                return false;
+            }
+            if (o->satoshi != b->satoshi) {
+                ++changed;
+                taken = b->satoshi - o->satoshi;
+            }
+        }
+        return changed == 1 && taken == fee_increase;
+    }
+    if (option->num_outputs + 1 == base->num_outputs) {
+        for (size_t dropped = 0; dropped < base->num_outputs; ++dropped) {
+            if (base->outputs[dropped].satoshi != fee_increase) {
+                continue;
+            }
+            bool same = true;
+            for (size_t i = 0, j = 0; i < base->num_outputs && same; ++i) {
+                if (i != dropped) {
+                    same = same_output(&base->outputs[i], &option->outputs[j++]);
+                }
+            }
+            if (same) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 // The other fee levels of this payment: they must spend exactly the same coins. Their txids and fees are returned.
-static bool get_fee_options(CborValue* params, const struct wally_tx* tx, uint8_t txids[][WALLY_TXHASH_LEN],
-    uint64_t* fees, size_t max_options, size_t* num_options, const char** errmsg)
+static bool get_fee_options(CborValue* params, const struct wally_tx* tx, const uint64_t base_fee,
+    uint8_t txids[][WALLY_TXHASH_LEN], uint64_t* fees, bool* fee_only, size_t max_options, size_t* num_options,
+    const char** errmsg)
 {
     JADE_ASSERT(params);
     JADE_ASSERT(tx);
@@ -148,6 +206,7 @@ static bool get_fee_options(CborValue* params, const struct wally_tx* tx, uint8_
         if (ok) {
             fees[n] = in - out;
             JADE_WALLY_VERIFY(wally_tx_get_txid(otx, txids[n], WALLY_TXHASH_LEN));
+            fee_only[n] = fees[n] > base_fee && fee_option_takes_from_one_output(tx, otx, fees[n] - base_fee);
         }
         if (otx && psbt->version != WALLY_PSBT_VERSION_0) {
             JADE_WALLY_VERIFY(wally_tx_free(otx));
@@ -164,6 +223,85 @@ static bool get_fee_options(CborValue* params, const struct wally_tx* tx, uint8_
     }
     *num_options = num_items;
     return true;
+}
+
+// Ruby: sign a taproot input by its script path (Delegated group member, Multi Signature group): one BIP340
+// signature of our (untweaked) key per leaf script our key's leaf hashes name, over the BIP342 tapscript sighash.
+// The leaves were checked by the key iterator (multi_a scripts holding our key, committed in the coin spent).
+// Each signature goes in the input as PSBT_IN_TAP_SCRIPT_SIG (key: x-only key || leaf hash).
+static bool sign_taproot_script_path(
+    struct wally_psbt* psbt, const size_t index, const struct wally_tx* tx, const struct ext_key* hdkey)
+{
+    JADE_ASSERT(psbt);
+    JADE_ASSERT(tx);
+    JADE_ASSERT(hdkey);
+    struct wally_psbt_input* input = &psbt->inputs[index];
+    const uint8_t* xonly = hdkey->pub_key + 1;
+
+    size_t found = 0;
+    if (wally_map_find(&input->taproot_leaf_hashes, xonly, EC_XONLY_PUBLIC_KEY_LEN, &found) != WALLY_OK || !found) {
+        return false;
+    }
+    const struct wally_map_item* hashes = &input->taproot_leaf_hashes.items[found - 1];
+    if (!hashes->value || !hashes->value_len || hashes->value_len % SHA256_LEN) {
+        return false;
+    }
+    const struct wally_tx_output* utxo = NULL;
+    if (wally_psbt_get_input_best_utxo(psbt, index, &utxo) != WALLY_OK || !utxo) {
+        return false;
+    }
+
+    // The scripts and amounts of every input (BIP341 signs them all), by input index
+    struct wally_map scripts, values;
+    JADE_WALLY_VERIFY(wally_map_init(psbt->num_inputs, NULL, &scripts));
+    JADE_WALLY_VERIFY(wally_map_init(psbt->num_inputs, NULL, &values));
+    bool ok = true;
+    for (size_t i = 0; i < psbt->num_inputs && ok; ++i) {
+        const struct wally_tx_output* spent = NULL;
+        ok = wally_psbt_get_input_best_utxo(psbt, i, &spent) == WALLY_OK && spent && spent->script
+            && wally_map_add_integer(&scripts, i, spent->script, spent->script_len) == WALLY_OK
+            && wally_map_add_integer(&values, i, (const unsigned char*)&spent->satoshi, sizeof(spent->satoshi))
+                == WALLY_OK;
+    }
+
+    const uint32_t sighash = input->sighash ? input->sighash : WALLY_SIGHASH_DEFAULT;
+    uint8_t txhash[SHA256_LEN];
+    uint8_t sig[EC_SIGNATURE_LEN + 1];
+    uint8_t sig_key[EC_XONLY_PUBLIC_KEY_LEN + SHA256_LEN];
+    for (size_t off = 0; off < hashes->value_len && ok; off += SHA256_LEN) {
+        const uint8_t* leaf_hash = hashes->value + off;
+        const struct wally_map_item* leaf = psbt_find_taproot_leaf_script(input, leaf_hash, utxo);
+        if (!leaf) {
+            ok = false;
+            break;
+        }
+        // The tapscript sighash: the leaf script (without its version), key version 0, no code separator
+        if (wally_tx_get_input_signature_hash(tx, index, &scripts, NULL, &values, leaf->value, leaf->value_len - 1,
+                0, WALLY_NO_CODESEPARATOR, NULL, 0, NULL, 0, sighash, WALLY_SIGTYPE_SW_V1, psbt->signing_cache, txhash,
+                sizeof(txhash))
+            != WALLY_OK) {
+            ok = false;
+            break;
+        }
+        size_t sig_len = EC_SIGNATURE_LEN;
+        if (wally_ec_sig_from_bytes(hdkey->priv_key + 1, EC_PRIVATE_KEY_LEN, txhash, sizeof(txhash), EC_FLAG_SCHNORR,
+                sig, EC_SIGNATURE_LEN)
+            != WALLY_OK) {
+            ok = false;
+            break;
+        }
+        if (sighash != WALLY_SIGHASH_DEFAULT) {
+            sig[sig_len++] = sighash & 0xff;
+        }
+        memcpy(sig_key, xonly, EC_XONLY_PUBLIC_KEY_LEN);
+        memcpy(sig_key + EC_XONLY_PUBLIC_KEY_LEN, leaf_hash, SHA256_LEN);
+        ok = wally_map_replace(&input->taproot_leaf_signatures, sig_key, sizeof(sig_key), sig, sig_len) == WALLY_OK;
+    }
+
+    // The maps own copies of the scripts and amounts
+    JADE_WALLY_VERIFY(wally_map_clear(&scripts));
+    JADE_WALLY_VERIFY(wally_map_clear(&values));
+    return ok;
 }
 
 // From https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki
@@ -1024,11 +1162,12 @@ int sign_psbt(jade_process_t* process, CborValue* params, const network_t networ
         } else {
             uint8_t option_txids[MAX_FEE_OPTIONS - 1][WALLY_TXHASH_LEN];
             uint64_t fees[MAX_FEE_OPTIONS];
+            bool fee_only[MAX_FEE_OPTIONS - 1] = { false };
             size_t num_options = 0;
             fees[0] = fee;
             if (params && rpc_has_field_data("fee_options", params)
-                && !get_fee_options(
-                    params, tx, option_txids, fees + 1, MAX_FEE_OPTIONS - 1, &num_options, errmsg)) {
+                && !get_fee_options(params, tx, fee, option_txids, fees + 1, fee_only, MAX_FEE_OPTIONS - 1,
+                    &num_options, errmsg)) {
                 retval = CBOR_RPC_BAD_PARAMETERS;
                 goto cleanup;
             }
@@ -1060,6 +1199,7 @@ int sign_psbt(jade_process_t* process, CborValue* params, const network_t networ
             for (size_t i = 0; i < num_options; ++i) {
                 memcpy(fee_options_approval.txids[i], option_txids[i], WALLY_TXHASH_LEN);
                 fee_options_approval.fees[i] = fees[i + 1];
+                fee_options_approval.fee_only[i] = fee_only[i];
             }
             fee_options_approval.expires = xTaskGetTickCount() + pdMS_TO_TICKS(FEE_OPTIONS_LIFETIME_MS);
         }
@@ -1083,6 +1223,18 @@ int sign_psbt(jade_process_t* process, CborValue* params, const network_t networ
         }
 
         JADE_LOGD("Signing input %u", index);
+
+        if (psbt->inputs[index].taproot_leaf_scripts.num_items) {
+            // Ruby: a script-path input (accepted by the key iterator only for multi_a leaves holding our key):
+            // signed per leaf, never by the key path
+            key_iter_input_begin(psbt, index, &iter);
+            if (!iter.is_valid || !sign_taproot_script_path(psbt, index, tx, &iter.hdkey)) {
+                *errmsg = "Failed to generate signature";
+                retval = CBOR_RPC_INTERNAL_ERROR;
+                goto cleanup;
+            }
+            continue;
+        }
 
         // Get the scriptpubkey or redeemscript, then the actual signing script, then the txhash
         uint8_t script[WALLY_SCRIPTSIG_MAX_LEN]; // Sufficient

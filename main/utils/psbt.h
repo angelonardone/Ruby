@@ -9,6 +9,16 @@
 #include "../jade_assert.h"
 
 struct wally_psbt;
+struct wally_psbt_input;
+struct wally_map_item;
+struct wally_tx_output;
+
+// Ruby: the most leaf scripts one key signs in one input (script path; libwally keeps at most 128 leaf hashes per key)
+#define MAX_TAPROOT_LEAVES_SIGNED 128
+
+#ifndef OP_CHECKSIGADD
+#define OP_CHECKSIGADD 0xba
+#endif
 
 /* An iterator for keypaths in a PSBT input or output.
  * The iterator holds the privately-derived key that corresponds to the
@@ -63,5 +73,12 @@ void key_iter_get_fingerprint_at(const key_iter* iter, size_t key_index, uint8_t
 // Get the path to the `key_index`th key in the keypath the iterator current points to
 WARN_UNUSED_RESULT bool key_iter_get_path_at(
     const key_iter* iter, size_t key_index, uint32_t* path, size_t path_len, size_t* written);
+
+/* Ruby: the leaf script (key: its control block; value: the script followed by its leaf version 0xc0) of the input
+ * whose BIP341 TapLeaf hash is `leaf_hash`. When `utxo` is given, the control block must also prove that the leaf
+ * is committed in that P2TR coin. NULL if not found or not committed.
+ */
+const struct wally_map_item* psbt_find_taproot_leaf_script(
+    const struct wally_psbt_input* input, const uint8_t* leaf_hash, const struct wally_tx_output* utxo);
 
 #endif /* PSBT_H_ */

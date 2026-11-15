@@ -48,6 +48,171 @@ static bool key_iter_is_taproot_keypath_with_scripts(
     return !memcmp(tweaked + 1, utxo->script + 2, EC_XONLY_PUBLIC_KEY_LEN);
 }
 
+// Ruby: BIP341 TapLeaf hash of a leaf script (leaf version, compact-size length, script)
+static bool tapleaf_hash(const uint8_t leaf_version, const uint8_t* script, const size_t script_len, uint8_t* hash_out)
+{
+    if (!script || !script_len || script_len > 0xffff) {
+        return false;
+    }
+    const size_t prefix_len = script_len < 0xfd ? 2 : 4;
+    uint8_t* const buf = JADE_MALLOC(prefix_len + script_len);
+    buf[0] = leaf_version;
+    if (prefix_len == 2) {
+        buf[1] = (uint8_t)script_len;
+    } else {
+        buf[1] = 0xfd;
+        buf[2] = (uint8_t)(script_len & 0xff);
+        buf[3] = (uint8_t)(script_len >> 8);
+    }
+    memcpy(buf + prefix_len, script, script_len);
+    const int ret = wally_bip340_tagged_hash(buf, prefix_len + script_len, "TapLeaf", hash_out, SHA256_LEN);
+    free(buf);
+    return ret == WALLY_OK;
+}
+
+// Ruby: true if the script is a BIP342 multi_a script (<k1> CHECKSIG <k2> CHECKSIGADD ... <k> NUMEQUAL) and one of
+// its keys is the x-only key given.
+static bool tapscript_is_multi_a_with_key(const uint8_t* script, const size_t script_len, const uint8_t* xonly)
+{
+    size_t pos = 0, num_keys = 0;
+    bool found = false;
+    while (pos + 1 + EC_XONLY_PUBLIC_KEY_LEN + 1 <= script_len && script[pos] == EC_XONLY_PUBLIC_KEY_LEN) {
+        const uint8_t op = script[pos + 1 + EC_XONLY_PUBLIC_KEY_LEN];
+        if (op != (num_keys ? OP_CHECKSIGADD : OP_CHECKSIG)) {
+            return false;
+        }
+        if (!memcmp(script + pos + 1, xonly, EC_XONLY_PUBLIC_KEY_LEN)) {
+            found = true;
+        }
+        pos += 1 + EC_XONLY_PUBLIC_KEY_LEN + 1;
+        ++num_keys;
+    }
+    if (!num_keys || num_keys > 999) {
+        return false;
+    }
+    // The threshold: OP_1..OP_16, or a minimal push of 1 or 2 bytes (k > 16), then OP_NUMEQUAL as the last opcode
+    size_t k = 0;
+    if (pos + 2 == script_len && script[pos] >= OP_1 && script[pos] <= OP_16) {
+        k = script[pos] - OP_1 + 1;
+    } else if (pos + 3 == script_len && script[pos] == 1 && script[pos + 1] > 16 && script[pos + 1] < 0x80) {
+        k = script[pos + 1];
+    } else if (pos + 4 == script_len && script[pos] == 2 && (script[pos + 2] || script[pos + 1] >= 0x80)
+        && script[pos + 2] < 0x80) {
+        k = script[pos + 1] | ((size_t)script[pos + 2] << 8);
+    } else {
+        return false;
+    }
+    if (script[script_len - 1] != OP_NUMEQUAL || !k || k > num_keys) {
+        return false;
+    }
+    return found;
+}
+
+// Ruby: BIP341 check that a leaf (by its hash) is committed in the P2TR coin spent, using its control block:
+// control block = (leaf version | output key parity) || internal key || merkle path (32 bytes per level, at most 128).
+static bool taproot_control_block_commits(const uint8_t* control, const size_t control_len, const uint8_t leaf_version,
+    const uint8_t* leaf_hash, const struct wally_tx_output* utxo)
+{
+    if (!control || control_len < 1 + EC_XONLY_PUBLIC_KEY_LEN
+        || (control_len - 1 - EC_XONLY_PUBLIC_KEY_LEN) % SHA256_LEN
+        || (control_len - 1 - EC_XONLY_PUBLIC_KEY_LEN) / SHA256_LEN > 128 || (control[0] & 0xfe) != leaf_version) {
+        return false;
+    }
+    if (!utxo || !utxo->script || utxo->script_len != 2 + EC_XONLY_PUBLIC_KEY_LEN || utxo->script[0] != OP_1
+        || utxo->script[1] != EC_XONLY_PUBLIC_KEY_LEN) {
+        return false;
+    }
+    uint8_t node[SHA256_LEN];
+    uint8_t branch[2 * SHA256_LEN];
+    memcpy(node, leaf_hash, SHA256_LEN);
+    for (size_t off = 1 + EC_XONLY_PUBLIC_KEY_LEN; off < control_len; off += SHA256_LEN) {
+        const uint8_t* sibling = control + off;
+        // TapBranch: the two hashes in lexicographic order
+        if (memcmp(node, sibling, SHA256_LEN) < 0) {
+            memcpy(branch, node, SHA256_LEN);
+            memcpy(branch + SHA256_LEN, sibling, SHA256_LEN);
+        } else {
+            memcpy(branch, sibling, SHA256_LEN);
+            memcpy(branch + SHA256_LEN, node, SHA256_LEN);
+        }
+        if (wally_bip340_tagged_hash(branch, sizeof(branch), "TapBranch", node, sizeof(node)) != WALLY_OK) {
+            return false;
+        }
+    }
+    uint8_t tweaked[EC_PUBLIC_KEY_LEN];
+    if (wally_ec_public_key_bip341_tweak(
+            control + 1, EC_XONLY_PUBLIC_KEY_LEN, node, sizeof(node), 0, tweaked, sizeof(tweaked))
+        != WALLY_OK) {
+        return false;
+    }
+    // The output key, and its parity as written in the control block
+    return !memcmp(tweaked + 1, utxo->script + 2, EC_XONLY_PUBLIC_KEY_LEN)
+        && ((tweaked[0] == 0x03) == ((control[0] & 1) == 1));
+}
+
+const struct wally_map_item* psbt_find_taproot_leaf_script(
+    const struct wally_psbt_input* input, const uint8_t* leaf_hash, const struct wally_tx_output* utxo)
+{
+    JADE_ASSERT(input);
+    JADE_ASSERT(leaf_hash);
+    uint8_t hash[SHA256_LEN];
+    for (size_t i = 0; i < input->taproot_leaf_scripts.num_items; ++i) {
+        // key: the control block; value: the script followed by its leaf version
+        const struct wally_map_item* item = &input->taproot_leaf_scripts.items[i];
+        if (!item->key || !item->value || item->value_len < 2) {
+            continue;
+        }
+        const uint8_t leaf_version = item->value[item->value_len - 1];
+        if (leaf_version != 0xc0 || !tapleaf_hash(leaf_version, item->value, item->value_len - 1, hash)
+            || memcmp(hash, leaf_hash, SHA256_LEN)) {
+            continue;
+        }
+        if (utxo && !taproot_control_block_commits(item->key, item->key_len, leaf_version, hash, utxo)) {
+            return NULL; // the leaf is not in the coin spent
+        }
+        return item;
+    }
+    return NULL;
+}
+
+// Ruby: an input spent by a script path (Delegated group member, Multi Signature group): our key signs the BIP342
+// multi_a leaf scripts its leaf hashes name. True only if: one key (x-only), at least one leaf hash for it, and for
+// every leaf hash a leaf script in the psbt that hashes to it (leaf version 0xc0), is a multi_a script holding our
+// key, and whose control block proves the leaf is committed in the coin spent (BIP341). Nothing is signed by the
+// key path.
+static bool key_iter_is_taproot_scriptpath(const key_iter* iter, const struct wally_map* keypaths)
+{
+    JADE_ASSERT(iter && iter->is_input);
+    if (keypaths->num_items != 1) {
+        return false;
+    }
+    const struct wally_psbt_input* input = &iter->psbt->inputs[iter->index];
+    const struct wally_map_item* key = &keypaths->items[0];
+    if (!key->key || key->key_len != EC_XONLY_PUBLIC_KEY_LEN) {
+        return false;
+    }
+    size_t found = 0;
+    if (wally_map_find(&input->taproot_leaf_hashes, key->key, key->key_len, &found) != WALLY_OK || !found) {
+        return false;
+    }
+    const struct wally_map_item* hashes = &input->taproot_leaf_hashes.items[found - 1];
+    if (!hashes->value || !hashes->value_len || hashes->value_len % SHA256_LEN
+        || hashes->value_len / SHA256_LEN > MAX_TAPROOT_LEAVES_SIGNED) {
+        return false;
+    }
+    const struct wally_tx_output* utxo = NULL;
+    if (wally_psbt_get_input_best_utxo(iter->psbt, iter->index, &utxo) != WALLY_OK || !utxo) {
+        return false;
+    }
+    for (size_t off = 0; off < hashes->value_len; off += SHA256_LEN) {
+        const struct wally_map_item* leaf = psbt_find_taproot_leaf_script(input, hashes->value + off, utxo);
+        if (!leaf || !tapscript_is_multi_a_with_key(leaf->value, leaf->value_len - 1, key->key)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // Ensure a taproot input/output is single-key and keypath-only
 // (until taproots with scripts are supported)
 static bool key_iter_is_supported_taproot(const key_iter* iter, const struct wally_map* keypaths)
@@ -58,7 +223,9 @@ static bool key_iter_is_supported_taproot(const key_iter* iter, const struct wal
     if (iter->is_input) {
         const struct wally_psbt_input* input = &iter->psbt->inputs[iter->index];
         if (input->taproot_leaf_scripts.num_items) {
-            return false; // Leaf script present: a script-path spend
+            // Ruby: a script-path spend. Accepted only for multi_a leaves holding our key that the coin spent
+            // really commits to (see key_iter_is_taproot_scriptpath); signed per leaf in sign_psbt.
+            return key_iter_is_taproot_scriptpath(iter, keypaths);
         }
         // TODO: use the wally merkle root accessor when it is exposed
         const uint32_t psbt_in_tap_merkle_root = 0x18; // From BIP-174
