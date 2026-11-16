@@ -14,6 +14,11 @@ built without Elements.
 
 Ruby tracks upstream Jade so that its security fixes can be merged: see [UPSTREAM.md](./UPSTREAM.md).
 
+Ruby signs the **Taproot groups** of the DistributedCryptography wallet (Delegated owner by the key path, members and
+Multi Signature by the script path, one approval for every fee level) and can register a group so that its change
+is recognised: see [RUBY-GROUPS.md](./RUBY-GROUPS.md). The RPC messages Ruby adds to Jade's are in
+[docs/index.rst](./docs/index.rst) ("Ruby specific").
+
 The original Jade documentation follows.
 
 ---

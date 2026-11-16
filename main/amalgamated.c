@@ -14,6 +14,7 @@ void __wrap_abort(void);
 #define ENABLE_MODULE_ECDH 1
 #define ENABLE_MODULE_ECDSA_S2C 1
 #define ENABLE_MODULE_EXTRAKEYS 1
+#define ENABLE_MODULE_MUSIG 1 // Ruby: BIP327 KeyAgg of Multi Signature groups (group.c)
 #define ENABLE_MODULE_RECOVERY 1
 #define ENABLE_MODULE_SCHNORRSIG 1
 #define HAVE_BUILTIN_POPCOUNT 1
@@ -29,6 +30,7 @@ void __wrap_abort(void);
 #include "./camera.c"
 #endif
 #include "./descriptor.c"
+#include "./group.c"
 #include "./display.c"
 #include "./display_hw.c"
 #include "./fonts/BigFont.c"
@@ -83,6 +85,7 @@ void __wrap_abort(void);
 #include "./process/get_utility_keys.c"
 #include "./process/get_registered_descriptor.c"
 #include "./process/get_registered_descriptors.c"
+#include "./process/get_registered_groups.c"
 #include "./process/get_registered_multisig.c"
 #include "./process/get_registered_multisigs.c"
 #include "./process/get_xpubs.c"
@@ -94,6 +97,7 @@ void __wrap_abort(void);
 #include "./process/process_utils.c"
 #include "./process/register_attestation.c"
 #include "./process/register_descriptor.c"
+#include "./process/register_group.c"
 #include "./process/register_multisig.c"
 #include "./process/register_otp.c"
 #include "./process/sign_attestation.c"
@@ -130,6 +134,7 @@ void __wrap_abort(void);
 #include "./ui/confirm_address.c"
 #include "./ui/dashboard.c"
 #include "./ui/descriptor.c"
+#include "./ui/group.c"
 #include "./ui/dialogs.c"
 #include "./ui/digit_entry.c"
 #include "./ui/keyboard.c"

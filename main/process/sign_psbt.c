@@ -1,6 +1,7 @@
 #ifndef AMALGAMATED_BUILD
 #include "../button_events.h"
 #include "../descriptor.h"
+#include "../group.h"
 #include "../jade_assert.h"
 #include "../jade_wally_verify.h"
 #include "../keychain.h"
@@ -311,6 +312,8 @@ static const uint8_t PSBT_MAGIC_PREFIX[5] = { 0x70, 0x73, 0x62, 0x74, 0xFF }; //
 #define PSBT_SIGNING_SINGLESIG 0x1
 #define PSBT_SIGNING_MULTISIG 0x2
 #define PSBT_SIGNING_GREEN_MULTISIG 0x4
+// Ruby: an input of a DistributedCryptography Taproot group (key path with a merkle root, or script path)
+#define PSBT_SIGNING_TAPROOT_GROUP 0x8
 
 // Also if just one multisig record used for all signing inputs
 #define PSBT_SIGNING_SINGLE_MULTISIG_RECORD 0x10
@@ -758,10 +761,59 @@ static bool get_suitable_descriptor_record(const key_iter* iter, const uint32_t*
     return false;
 }
 
+// Ruby: true if the group gives exactly 'script' at our key 'path' (our chain path + /i)
+static bool group_script_matches(const group_data_t* group, const network_t network_id, const uint32_t* path,
+    const size_t path_len, const uint8_t* script, const size_t script_len, uint8_t* chain_out)
+{
+    JADE_ASSERT(group);
+    JADE_ASSERT(path);
+    JADE_ASSERT(chain_out);
+    uint8_t chain = 0;
+    uint32_t index = 0;
+    uint8_t trial[WALLY_SCRIPTPUBKEY_P2TR_LEN];
+    if (group->network_id != network_id || !script || script_len != sizeof(trial)
+        || !group_path_to_chain_index(group, path, path_len, &chain, &index)
+        || !group_get_script(group, chain, index, trial, sizeof(trial))) {
+        return false;
+    }
+    *chain_out = chain;
+    return !sodium_memcmp(trial, script, sizeof(trial));
+}
+
+// Ruby: find the registered group whose address at our key path is the coin spent
+static bool get_suitable_group_record(const network_t network_id, const uint32_t* path, const size_t path_len,
+    const uint8_t* script, const size_t script_len, char* group_name, const size_t group_name_len,
+    group_data_t* group)
+{
+    char names[MAX_GROUP_REGISTRATIONS][NVS_KEY_NAME_MAX_SIZE];
+    size_t num_names = 0;
+    if (!storage_get_all_group_registration_names(names, MAX_GROUP_REGISTRATIONS, &num_names)) {
+        JADE_LOGE("Error loading group record names");
+        return false;
+    }
+    for (size_t i = 0; i < num_names; ++i) {
+        const char* errmsg = NULL;
+        uint8_t chain = 0;
+        if (!group_load_from_storage(names[i], group, &errmsg)) {
+            JADE_LOGD("Ignoring group %s: %s", names[i], errmsg ? errmsg : "not valid");
+            continue;
+        }
+        if (group_script_matches(group, network_id, path, path_len, script, script_len, &chain)) {
+            JADE_LOGI("Found suitable group record: %s", names[i]);
+            JADE_ASSERT(strlen(names[i]) < group_name_len);
+            strcpy(group_name, names[i]);
+            return true;
+        }
+    }
+    JADE_LOGI("No registered group for this input");
+    return false;
+}
+
 // Examine outputs for change we can automatically validate
+// Ruby: 'group' (optional) is the registered group of every input signed: its own addresses are recognised.
 static bool psbt_update_outputs(const network_t network_id, struct wally_psbt* psbt, const uint8_t signing_flags,
     const char* wallet_name, const multisig_data_t* multisig_data, const descriptor_data_t* descriptor,
-    output_info_t* output_info, const char** errmsg)
+    const group_data_t* group, const char* group_name, output_info_t* output_info, const char** errmsg)
 {
     JADE_ASSERT(network_id != NETWORK_NONE);
     JADE_ASSERT(psbt);
@@ -809,6 +861,22 @@ static bool psbt_update_outputs(const network_t network_id, struct wally_psbt* p
         }
 
         const size_t num_keys = key_iter_get_num_keys(&iter);
+
+        // Ruby: an address of the registered group the inputs belong to (our key is one of the group's): change on
+        // the change chain, else a receiving address of the same group
+        uint8_t group_chain = 0;
+        if (group && num_keys == 1
+            && group_script_matches(group, network_id, path, path_len, tx_script, tx_script_len, &group_chain)) {
+            const bool is_group_change = group_chain == GROUP_CHAIN_CHANGE;
+            JADE_LOGI("Output %u group %s address validated: %s", index, is_group_change ? "change" : "receive",
+                group_name);
+            outinfo->flags |= OUTPUT_FLAG_IS_OURS;
+            if (is_group_change) {
+                outinfo->flags |= OUTPUT_FLAG_CHANGE;
+            }
+            continue;
+        }
+
         if (num_keys == 1) {
             JADE_ASSERT(iter.key_index == 0); // only key present
 
@@ -988,6 +1056,10 @@ int sign_psbt(jade_process_t* process, CborValue* params, const network_t networ
     char wallet_name[NVS_KEY_NAME_MAX_SIZE] = { '\0' };
     multisig_data_t* multisig_data = NULL;
     descriptor_data_t* descriptor = NULL;
+    // Ruby: the registered group of the Taproot group inputs (if all of them belong to the same one)
+    char group_name[NVS_KEY_NAME_MAX_SIZE] = { '\0' };
+    group_data_t* group = NULL;
+    bool group_change_abandoned = false;
     for (size_t index = 0; index < psbt->num_inputs; ++index) {
         struct wally_psbt_input* input = &psbt->inputs[index];
 
@@ -1019,8 +1091,16 @@ int sign_psbt(jade_process_t* process, CborValue* params, const network_t networ
         JADE_ASSERT(sig_type);
         sig_types[index] = (uint8_t)sig_type; // Sufficient
 
+        // Ruby: a Taproot group input (script path, or key path with a merkle root): validated by the key iterator
+        const uint32_t psbt_in_tap_merkle_root = 0x18; // From BIP-174
+        const bool is_group_input = sig_type == WALLY_SIGTYPE_SW_V1
+            && (input->taproot_leaf_scripts.num_items
+                || wally_map_get_integer(&input->psbt_fields, psbt_in_tap_merkle_root));
+
         const size_t num_keys = key_iter_get_num_keys(&iter);
-        if (num_keys > 1) {
+        if (is_group_input) {
+            signing_flags |= PSBT_SIGNING_TAPROOT_GROUP;
+        } else if (num_keys > 1) {
             const bool is_green = is_green_multisig_signers(network_id, &iter, NULL);
             signing_flags |= is_green ? PSBT_SIGNING_GREEN_MULTISIG : PSBT_SIGNING_MULTISIG;
         } else {
@@ -1041,6 +1121,33 @@ int sign_psbt(jade_process_t* process, CborValue* params, const network_t networ
             const script_flavour_t script_flavour = get_script_flavour(utxo->script, utxo->script_len, &is_p2tr);
             JADE_ASSERT(is_p2tr == (sig_type == WALLY_SIGTYPE_SW_V1));
             update_aggregate_scripts_flavour(script_flavour, &aggregate_inputs_scripts_flavour);
+        }
+
+        // Ruby: a group input - see if every group input is an address of the same registered group, and if so keep
+        // the record to recognise the group's change (and receiving) addresses in the outputs
+        if (is_group_input) {
+            if (!group_change_abandoned) {
+                size_t path_len = 0;
+                uint32_t path[MAX_PATH_LEN];
+                uint8_t chain = 0;
+                if (!key_iter_get_path(&iter, path, MAX_PATH_LEN, &path_len)) {
+                    group_change_abandoned = true;
+                } else if (group) {
+                    if (!group_script_matches(
+                            group, network_id, path, path_len, utxo->script, utxo->script_len, &chain)) {
+                        JADE_LOGW("Group '%s' inappropriate for input %u - group change detection abandoned",
+                            group_name, index);
+                        group_change_abandoned = true;
+                    }
+                } else {
+                    group = JADE_MALLOC(sizeof(group_data_t));
+                    if (!get_suitable_group_record(network_id, path, path_len, utxo->script, utxo->script_len,
+                            group_name, sizeof(group_name), group)) {
+                        group_change_abandoned = true;
+                    }
+                }
+            }
+            continue;
         }
 
         // If multisig, see if all signing inputs match the same persisted wallet record
@@ -1123,9 +1230,13 @@ int sign_psbt(jade_process_t* process, CborValue* params, const network_t networ
         }
     } // iterate keys
 
+    // Ruby: the group's own addresses are recognised only when every input signed is of that one registered group
+    const bool only_group_inputs = signing_flags == PSBT_SIGNING_TAPROOT_GROUP;
+    const group_data_t* const outputs_group = group && !group_change_abandoned && only_group_inputs ? group : NULL;
+
     // Examine outputs for change we can automatically validate
-    if (!psbt_update_outputs(
-            network_id, psbt, signing_flags, wallet_name, multisig_data, descriptor, output_info, errmsg)) {
+    if (!psbt_update_outputs(network_id, psbt, signing_flags, wallet_name, multisig_data, descriptor, outputs_group,
+            group_name, output_info, errmsg)) {
         // errmsg will be populated
         retval = CBOR_RPC_BAD_PARAMETERS;
         goto cleanup;
@@ -1279,6 +1390,7 @@ int sign_psbt(jade_process_t* process, CborValue* params, const network_t networ
 
 cleanup:
     SENSITIVE_POP(&iter);
+    free(group);
     free(descriptor);
     free(multisig_data);
     free(sig_types);

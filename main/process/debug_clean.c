@@ -1,5 +1,6 @@
 #ifndef AMALGAMATED_BUILD
 #include "../descriptor.h"
+#include "../group.h"
 #include "../jade_assert.h"
 #include "../keychain.h"
 #include "../multisig.h"
@@ -61,6 +62,17 @@ void debug_clean_reset_process(void* process_ptr)
 
     for (int i = 0; i < num_descriptors; ++i) {
         ok = storage_erase_descriptor_registration(descriptor_names[i]);
+        JADE_ASSERT(ok);
+    }
+
+    // Ruby: clean DistributedCryptography group registrations from storage
+    char group_names[MAX_GROUP_REGISTRATIONS][NVS_KEY_NAME_MAX_SIZE]; // Sufficient
+    size_t num_groups = 0;
+    ok = storage_get_all_group_registration_names(group_names, MAX_GROUP_REGISTRATIONS, &num_groups);
+    JADE_ASSERT(ok);
+
+    for (int i = 0; i < num_groups; ++i) {
+        ok = storage_erase_group_registration(group_names[i]);
         JADE_ASSERT(ok);
     }
 

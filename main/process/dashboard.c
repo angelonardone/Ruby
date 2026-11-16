@@ -3,6 +3,7 @@
 #include "../button_events.h"
 #include "../descriptor.h"
 #include "../display.h"
+#include "../group.h"
 #include "../input.h"
 #include "../jade_assert.h"
 #include "../jade_wally_verify.h"
@@ -133,6 +134,8 @@ void register_multisig_process(void* process_ptr);
 void get_registered_descriptors_process(void* process_ptr);
 void get_registered_descriptor_process(void* process_ptr);
 void register_descriptor_process(void* process_ptr);
+void register_group_process(void* process_ptr); // Ruby
+void get_registered_groups_process(void* process_ptr); // Ruby
 void get_receive_address_process(void* process_ptr);
 void get_identity_pubkey_process(void* process_ptr);
 void get_identity_shared_key_process(void* process_ptr);
@@ -224,6 +227,9 @@ bool show_multisig_activity(const char* multisig_name, bool is_sorted, uint32_t 
 bool show_descriptor_activity(const char* descriptor_name, const descriptor_data_t* descriptor,
     const signer_t* signer_details, size_t num_signer_details, const uint8_t* wallet_fingerprint,
     size_t wallet_fingerprint_len, network_t network_id, bool initial_confirmation, bool overwriting, bool is_valid);
+// Ruby: DistributedCryptography groups (ui/group.c)
+bool select_registered_group(const char* const* labels, size_t num_groups, size_t* selected_out);
+bool show_view_group_activity(const group_data_t* group, const char* address0);
 
 gui_activity_t* make_session_activity(void);
 gui_activity_t* make_ble_activity(gui_view_node_t** ble_status_item);
@@ -573,6 +579,11 @@ static void dispatch_message(jade_process_t* process)
             task_function = get_registered_descriptor_process;
         } else if (IS_METHOD("register_descriptor")) {
             task_function = register_descriptor_process;
+        } else if (IS_METHOD("register_group")) {
+            // Ruby: DistributedCryptography Taproot group (see group.h)
+            task_function = register_group_process;
+        } else if (IS_METHOD("get_registered_groups")) {
+            task_function = get_registered_groups_process;
         } else if (IS_METHOD("get_receive_address")) {
             task_function = get_receive_address_process;
         } else if (IS_METHOD("get_identity_pubkey")) {
@@ -1039,6 +1050,70 @@ static bool offer_delete_registered_wallet(const char* name, const bool is_multi
     return true;
 }
 
+// Ruby: the registered DistributedCryptography groups (see group.h): view one (summary and first address) and
+// optionally delete it. Returns true if the user picked the other registered wallets (multisig / descriptor).
+static bool handle_registered_groups(const bool have_other_wallets)
+{
+    char names[MAX_GROUP_REGISTRATIONS][NVS_KEY_NAME_MAX_SIZE];
+    size_t num_names = 0;
+    if (!storage_get_all_group_registration_names(names, MAX_GROUP_REGISTRATIONS, &num_names) || !num_names) {
+        return have_other_wallets;
+    }
+
+    // Labels for the carousel, one record loaded at a time
+    char(*const label_buf)[MAX_GROUP_LABEL_LEN + 16] = JADE_CALLOC(MAX_GROUP_REGISTRATIONS, MAX_GROUP_LABEL_LEN + 16);
+    const char* labels[MAX_GROUP_REGISTRATIONS + 1];
+    group_data_t* const group = JADE_MALLOC(sizeof(group_data_t));
+    for (size_t i = 0; i < num_names; ++i) {
+        const char* errmsg = NULL;
+        if (group_load_from_storage(names[i], group, &errmsg)) {
+            strcpy(label_buf[i], group->label);
+        } else {
+            snprintf(label_buf[i], MAX_GROUP_LABEL_LEN + 16, "%s (not valid)", names[i]);
+        }
+        labels[i] = label_buf[i];
+    }
+    size_t num_items = num_names;
+    if (have_other_wallets) {
+        labels[num_items++] = "Other wallets";
+    }
+
+    bool want_other_wallets = false;
+    size_t selected = 0;
+    if (select_registered_group(labels, num_items, &selected)) {
+        if (selected == num_names) {
+            want_other_wallets = true;
+        } else {
+            const char* errmsg = NULL;
+            const bool valid = group_load_from_storage(names[selected], group, &errmsg);
+            char* address0 = NULL;
+            if (valid && !group_get_address(group, group->network_id, GROUP_CHAIN_RECEIVING, 0, &address0)) {
+                address0 = NULL;
+            }
+            bool delete_group;
+            if (valid) {
+                delete_group = show_view_group_activity(group, address0);
+            } else {
+                const char* question[] = { names[selected], "Not valid for", "this wallet. Delete?" };
+                delete_group = await_yesno_activity_critical("Delete Group", question, 3, false, NULL);
+            }
+            if (address0) {
+                JADE_WALLY_VERIFY(wally_free_string(address0));
+            }
+            if (delete_group) {
+                if (storage_erase_group_registration(names[selected])) {
+                    await_message_2("Group", "Deleted");
+                } else {
+                    await_error_2("Failed to delete", "group!");
+                }
+            }
+        }
+    }
+    free(group);
+    free(label_buf);
+    return want_other_wallets;
+}
+
 static void handle_registered_wallets(void)
 {
     char multisig_names[MAX_MULTISIG_REGISTRATIONS][NVS_KEY_NAME_MAX_SIZE]; // Sufficient
@@ -1054,6 +1129,14 @@ static void handle_registered_wallets(void)
     JADE_ASSERT(done);
 
     const size_t num_registered_wallets = num_multisigs + num_descriptors;
+
+    // Ruby: DistributedCryptography groups first; the other registrations from there
+    if (storage_get_group_registration_count()) {
+        if (!handle_registered_groups(num_registered_wallets > 0)) {
+            return;
+        }
+    }
+
     if (!num_registered_wallets) {
         await_message_2("No additional wallets", "registered");
         return;

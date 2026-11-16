@@ -2,6 +2,7 @@
 #include <inttypes.h>
 
 #include "../descriptor.h"
+#include "../group.h"
 #include "../gui.h"
 #include "../jade_assert.h"
 #include "../keychain.h"
@@ -78,6 +79,36 @@ void get_receive_address_process(void* process_ptr)
                 pubkeys, written, script, sizeof(script), &script_len)) {
             jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, "Failed to generate valid multisig script");
             goto cleanup;
+        }
+    } else if (rpc_has_field_data("group_name", &params)) {
+        // Ruby: an address of a registered DistributedCryptography group: branch 0 = receiving, 1 = change chain
+        group_data_t* const group = JADE_MALLOC(sizeof(group_data_t));
+        jade_process_free_on_exit(process, group);
+
+        char group_name[NVS_KEY_NAME_MAX_SIZE];
+        size_t written = 0;
+        rpc_get_string("group_name", sizeof(group_name), &params, group_name, &written);
+        if (!written || !storage_key_name_valid(group_name) || !group_load_from_storage(group_name, group, &errmsg)) {
+            jade_process_reject_message(
+                process, CBOR_RPC_BAD_PARAMETERS, errmsg ? errmsg : "Missing or invalid group_name");
+            goto cleanup;
+        }
+        if (group->network_id != network_id) {
+            jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, "Group registered for another network");
+            goto cleanup;
+        }
+
+        const uint32_t branch = rpc_get_uint32_or("branch", &params, 0); // optional
+        uint32_t pointer = 0;
+        if (branch > GROUP_CHAIN_CHANGE || !rpc_get_uint32("pointer", &params, &pointer)
+            || !group_get_script(group, (uint8_t)branch, pointer, script, sizeof(script))) {
+            jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, "Failed to generate valid group script");
+            goto cleanup;
+        }
+        script_len = WALLY_SCRIPTPUBKEY_P2TR_LEN;
+        if (branch == GROUP_CHAIN_CHANGE) {
+            const int ret = snprintf(warning_msg, sizeof(warning_msg), "\nNote:\nGroup change\naddress");
+            JADE_ASSERT(ret > 0 && ret < sizeof(warning_msg));
         }
     } else if (rpc_has_field_data("descriptor_name", &params)) {
         // Load descriptor record

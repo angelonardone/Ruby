@@ -19,6 +19,7 @@ static const char* const MULTISIG_NAMESPACE = "MULTISIGS";
 static const char* const DESCRIPTOR_NAMESPACE = "DESCRIPTORS";
 static const char* const OTP_NAMESPACE = "OTP";
 static const char* const HOTP_COUNTERS_NAMESPACE = "HOTPC";
+static const char* const GROUP_NAMESPACE = "DCGROUPS"; // Ruby: DistributedCryptography Taproot groups
 
 static const char* PIN_PRIVATEKEY_FIELD = "privatekey";
 static const char* PIN_COUNTER_FIELD = "counter";
@@ -43,7 +44,8 @@ static const char* QR_FLAGS_FIELD = "qrflags";
 static const char* CLICK_EVENT_FIELD = "clickevent";
 
 static const char* const nvs_namespaces[]
-    = { DEFAULT_NAMESPACE, MULTISIG_NAMESPACE, DESCRIPTOR_NAMESPACE, OTP_NAMESPACE, HOTP_COUNTERS_NAMESPACE };
+    = { DEFAULT_NAMESPACE, MULTISIG_NAMESPACE, DESCRIPTOR_NAMESPACE, OTP_NAMESPACE, HOTP_COUNTERS_NAMESPACE,
+          GROUP_NAMESPACE };
 
 // NOTE: esp-idf reserve the final page of nvs entries for internal use (for defrag/consolidation)
 // See: https://github.com/espressif/esp-idf/issues/5247#issuecomment-1048604221
@@ -413,6 +415,24 @@ bool storage_get_stats(size_t* entries_used, size_t* entries_free)
         *entries_free = stats.free_entries;
     }
     return true;
+}
+
+// Ruby: true if a blob of 'len' bytes can be stored and still leave STORAGE_RESERVED_FREE_ENTRIES free entries.
+// Every unlock writes the PIN attempt counter (storage_decrement_counter): with a full NVS that write fails and the
+// wallet cannot be unlocked any more. So every registration (multisig, descriptor, group) must leave a reserve.
+// A blob takes one index entry, one header entry per chunk (a chunk does not cross a page) and its data entries.
+bool storage_has_room_for_blob(const size_t len)
+{
+    size_t entries_used = 0, entries_free = 0;
+    if (!storage_get_stats(&entries_used, &entries_free)) {
+        return false;
+    }
+    const size_t data_entries = (len + ESP_NVS_ENTRY_SIZE - 1) / ESP_NVS_ENTRY_SIZE;
+    const size_t chunk_headers = 1 + data_entries / ESP_NVS_ENTRIES_PER_PAGE + 1;
+    const size_t needed = 1 + chunk_headers + data_entries;
+    JADE_LOGI("NVS: %u entries used, %u free, a blob of %u bytes needs %u (+%u reserve)", entries_used, entries_free,
+        len, needed, STORAGE_RESERVED_FREE_ENTRIES);
+    return entries_free >= needed + STORAGE_RESERVED_FREE_ENTRIES;
 }
 
 bool storage_key_name_valid(const char* name)
@@ -785,6 +805,30 @@ bool storage_get_all_descriptor_registration_names(
 }
 
 bool storage_erase_descriptor_registration(const char* name) { return erase_key(DESCRIPTOR_NAMESPACE, name); }
+
+// Ruby: DistributedCryptography Taproot groups
+bool storage_set_group_registration(const char* name, const uint8_t* registration, const size_t registration_len)
+{
+    return store_blob(GROUP_NAMESPACE, name, registration, registration_len);
+}
+
+bool storage_get_group_registration(
+    const char* name, uint8_t* registration, const size_t registration_len, size_t* written)
+{
+    return read_blob(GROUP_NAMESPACE, name, registration, registration_len, written);
+}
+
+size_t storage_get_group_registration_count(void) { return get_entry_count(GROUP_NAMESPACE, NVS_TYPE_BLOB); }
+
+bool storage_group_name_exists(const char* name) { return key_name_exists(name, GROUP_NAMESPACE, NVS_TYPE_BLOB); }
+
+bool storage_get_all_group_registration_names(
+    char names[][NVS_KEY_NAME_MAX_SIZE], const size_t num_names, size_t* num_written)
+{
+    return get_all_key_names(GROUP_NAMESPACE, NVS_TYPE_BLOB, names, num_names, num_written);
+}
+
+bool storage_erase_group_registration(const char* name) { return erase_key(GROUP_NAMESPACE, name); }
 
 // HOTP / TOTP
 bool storage_set_otp_data(const char* name, const uint8_t* data, const size_t data_len)

@@ -1819,6 +1819,136 @@ get_utility_keys reply
 * Decrypted, it is 6 BIP32 serialized extended private keys (78 bytes each) in this order, relative to m/86'/c'/0': 1000'/0' (login), 2000'/0' (chat), 3000'/0' (groups), 4000'/0' (json files), 5000'/0' (file encryption), 6000' (HSM root).
 * A wallet restored from the same mnemonic (no BIP39 passphrase) derives exactly the same keys.
 
+.. _sign_psbt_ruby:
+
+sign_psbt: Ruby additions
+-------------------------
+
+Used for the Taproot groups of the DistributedCryptography wallet (see RUBY-GROUPS.md in the repository).
+
+* A taproot input spent by the **key path of an output that also has scripts** (PSBT_IN_TAP_MERKLE_ROOT present, one key, no leaf hashes) is signed only if the coin spent is exactly P2TR of that key tweaked with that merkle root.
+* A taproot input spent by a **script path** (PSBT_IN_TAP_LEAF_SCRIPT present) is signed only if every leaf hash of Ruby's key (at most 128) names a leaf script of the psbt (leaf version 0xc0) that is a BIP342 multi_a script holding Ruby's key, and whose control block proves the leaf is committed in the coin spent. Each leaf is signed with the tapscript sighash and the signature is added as PSBT_IN_TAP_SCRIPT_SIG.
+* Optional 'fee_options': the same payment at other fees, so a group's last signer can choose one.
+
+.. code-block:: cbor
+
+    {
+        "id": "6980",
+        "method": "sign_psbt",
+        "params": {
+            "network": "mainnet",
+            "psbt": <psbt bytes>,
+            "fee_options": [<psbt bytes>, <psbt bytes>]
+        }
+    }
+
+* 'fee_options' holds up to 3 psbts. Ruby shows the payment once with every fee ('Sign N Fees') and, after that one approval, signs 'psbt' (the reply) and remembers the approval of each option: a following 'sign_psbt' of an approved option is signed without asking, once.
+* An option is approved with the payment only if it spends the same coins and pays the same outputs in the same order, except that one output gets less, or is dropped, by exactly the extra fee. Any other option is refused ('A fee option does not spend the same coins', ...).
+* The outputs that are addresses of a registered group (see register_group_request_) are recognised when every input signed is of that group: on its change chain they are change (not shown, not counted as spent); on its receiving chain they are shown as the wallet's own.
+
+.. _register_group_request:
+
+register_group request
+----------------------
+
+Registers a DistributedCryptography Taproot group (Delegated or Multi Signature), so Ruby recognises the group's own addresses: in a payment of that group its change is not shown for confirmation.  The user confirms the group and its first address on the device.  Ruby keeps the keys once each and calculates the addresses itself (main/group.c).  Up to 24 groups, as long as the storage keeps its reserve.
+
+.. code-block:: cbor
+
+    {
+        "id": "7001",
+        "method": "register_group",
+        "params": {
+            "network": "localtest",
+            "group_name": "dc3f9a01c2b4e5d",
+            "label": "Family savings",
+            "type": "delegated",
+            "threshold": 2,
+            "owner": { "receiving": "tpub...", "change": "tpub..." },
+            "signers": [
+                { "receiving": "tpub...", "change": "tpub..." },
+                { "receiving": "tpub...", "change": "tpub..." },
+                { "receiving": "tpub...", "change": "tpub..." }
+            ],
+            "receiving_path": [2147483734, 2147483649, 2147483648, 2],
+            "change_path": [2147483734, 2147483649, 2147483648, 3]
+        }
+    }
+
+* 'group_name' is the storage name, at most 15 characters; 'label' is shown on Ruby, at most 40 printable characters.
+* 'type' is 'delegated' (the internal key is the owner's key) or 'multisig' (the internal key is the BIP327 MuSig2 aggregate of all the signers; no 'owner').
+* 'threshold' is k: every k-combination of the signers is one multi_a leaf.  2 to 15 signers, at most 2000 combinations.
+* 'owner' and 'signers' are the chain extended public keys of every participant (any order: Ruby sorts the signers as the wallet does).
+* 'receiving_path' / 'change_path' are Ruby's own chain paths: Ruby's xpubs there must be the owner's or one signer's, on both chains.
+* Using an existing name with other keys replaces the record (the user is told); an identical registration answers 'true' at once.
+* Errors: 'This Ruby is not a participant of the group', 'Too many combinations of signers for Ruby', 'Not enough storage space on Ruby' (every registration must leave 32 free storage entries: the PIN counter is written at every unlock), 'User declined to register group'.
+
+.. _register_group_reply:
+
+register_group reply
+--------------------
+
+.. code-block:: cbor
+
+    {
+        "id": "7001",
+        "result": true
+    }
+
+.. _get_registered_groups_request:
+
+get_registered_groups request
+-----------------------------
+
+.. code-block:: cbor
+
+    {
+        "id": "7002",
+        "method": "get_registered_groups"
+    }
+
+.. _get_registered_groups_reply:
+
+get_registered_groups reply
+---------------------------
+
+.. code-block:: cbor
+
+    {
+        "id": "7002",
+        "result": {
+            "dc3f9a01c2b4e5d": {
+                "label": "Family savings",
+                "type": "delegated",
+                "threshold": 2,
+                "num_signers": 3,
+                "owner": false
+            }
+        }
+    }
+
+* Only the groups registered by the current wallet are listed (the records carry an HMAC with the wallet's master key).
+
+.. _get_receive_address_group:
+
+get_receive_address for a registered group
+------------------------------------------
+
+.. code-block:: cbor
+
+    {
+        "id": "7003",
+        "method": "get_receive_address",
+        "params": {
+            "network": "localtest",
+            "group_name": "dc3f9a01c2b4e5d",
+            "branch": 0,
+            "pointer": 7
+        }
+    }
+
+* 'branch' 0 is the group's receiving chain, 1 its change chain; 'pointer' is the address number.  Ruby calculates the address, shows it for confirmation and returns it.
+
 Indices and tables
 ==================
 

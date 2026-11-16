@@ -15,6 +15,7 @@ bool descriptor_search_for_script_impl(void* ctx);
 bool descriptor_to_address_impl(void* ctx);
 bool descriptor_to_script_impl(void* ctx);
 bool parse_psbt_bytes(void* ctx);
+bool group_get_script_task(void* ctx); // Ruby: group addresses (group.c)
 
 // Helper to run function which may require a larger amount of stack space in a temporary task.
 // Function protected by a mutex so can only be running once (prevents excessive memory
@@ -46,7 +47,8 @@ static void temp_task_wrapper(void* ctx)
     // Use a whitelist of allowed calls
     JADE_ASSERT(args);
     bool is_allowed = args->fn == &descriptor_search_for_script_impl || args->fn == &descriptor_to_address_impl
-        || args->fn == &descriptor_to_script_impl || args->fn == &parse_psbt_bytes;
+        || args->fn == &descriptor_to_script_impl || args->fn == &parse_psbt_bytes
+        || args->fn == &group_get_script_task;
     JADE_ASSERT(is_allowed);
 #endif // CONFIG_DEBUG_MODE / CONFIG_LIBJADE / SELFCHECK
 

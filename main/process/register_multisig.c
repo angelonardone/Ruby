@@ -94,6 +94,13 @@ static int register_multisig(const char* multisig_name, const network_t network_
         }
     }
 
+    // Ruby: never fill the storage (the PIN counter must stay writable, see storage_has_room_for_blob)
+    if (!storage_has_room_for_blob(registration_len)) {
+        *errmsg = "Not enough storage space on Ruby";
+        retval = CBOR_RPC_BAD_PARAMETERS;
+        goto cleanup;
+    }
+
     // Check to see whether user accepted or declined
     const bool is_valid = true;
     const bool initial_confirmation = true;

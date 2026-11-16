@@ -41,6 +41,11 @@ typedef enum { STORAGE_PIN_KEEP_PRIVKEY, STORAGE_PIN_ERASE_PRIVKEY } storage_pin
 WARN_UNUSED_RESULT bool storage_init(void);
 bool storage_erase(void);
 bool storage_get_stats(size_t* entries_used, size_t* entries_free);
+
+// Ruby: NVS entries (32 bytes each) every registration must leave free, so the PIN counter can still be written
+#define STORAGE_RESERVED_FREE_ENTRIES 32
+bool storage_has_room_for_blob(size_t len);
+
 bool storage_key_name_valid(const char* name);
 void storage_key_name_make_valid(char* name);
 
@@ -114,6 +119,15 @@ bool storage_get_all_descriptor_registration_names(
     char names[][NVS_KEY_NAME_MAX_SIZE], size_t num_names, size_t* num_written);
 
 bool storage_erase_descriptor_registration(const char* name);
+
+// Ruby: DistributedCryptography Taproot groups (see group.h)
+bool storage_set_group_registration(const char* name, const uint8_t* registration, size_t registration_len);
+bool storage_get_group_registration(const char* name, uint8_t* registration, size_t registration_len, size_t* written);
+size_t storage_get_group_registration_count(void);
+bool storage_group_name_exists(const char* name);
+bool storage_get_all_group_registration_names(
+    char names[][NVS_KEY_NAME_MAX_SIZE], size_t num_names, size_t* num_written);
+bool storage_erase_group_registration(const char* name);
 
 // HOTP / TOTP
 bool storage_set_otp_data(const char* name, const uint8_t* data, size_t data_len);

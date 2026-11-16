@@ -115,6 +115,13 @@ static int register_descriptor(
         }
     }
 
+    // Ruby: never fill the storage (the PIN counter must stay writable, see storage_has_room_for_blob)
+    if (!storage_has_room_for_blob(registration_len)) {
+        *errmsg = "Not enough storage space on Ruby";
+        retval = CBOR_RPC_BAD_PARAMETERS;
+        goto cleanup;
+    }
+
     // Check to see whether user accepted or declined
     const bool is_valid = true;
     const bool initial_confirmation = true;
