@@ -10,7 +10,7 @@ The RPC messages are in [docs/index.rst](docs/index.rst) ("Ruby specific").
 | One approval for every fee level of a payment (`sign_psbt` `fee_options`) | `7a3753b6` | `main/process/sign_psbt.c`, `main/ui/sign_tx.c` |
 | Key path of an output that also has scripts (Delegated owner) | `df8fcebc` | `main/utils/psbt.c` |
 | Script path of `multi_a` leaves (Delegated member, Multi Signature) | `69392994` | `main/utils/psbt.c`, `main/process/sign_psbt.c` |
-| Group registration: Ruby recognises the group's change | (this change) | `main/group.[ch]`, `main/process/register_group.c`, `main/process/get_registered_groups.c`, `main/ui/group.c`, `main/process/sign_psbt.c`, `main/process/get_receive_address.c`, `main/process/dashboard.c`, `main/process/debug_clean.c`, `main/process.c` (reply allowed), `main/storage.[ch]`, `main/process/register_multisig.c` and `register_descriptor.c` (storage reserve), `main/amalgamated.c` and `components/libwally-core/CMakeLists.txt` (`ENABLE_MODULE_MUSIG`) |
+| Group registration: Ruby recognises the group's change | `be9f95d7` | `main/group.[ch]`, `main/process/register_group.c`, `main/process/get_registered_groups.c`, `main/ui/group.c`, `main/process/sign_psbt.c`, `main/process/get_receive_address.c`, `main/process/dashboard.c`, `main/process/debug_clean.c`, `main/process.c` (reply allowed), `main/storage.[ch]`, `main/process/register_multisig.c` and `register_descriptor.c` (storage reserve), `main/amalgamated.c` and `components/libwally-core/CMakeLists.txt` (`ENABLE_MODULE_MUSIG`) |
 
 ## 1. The groups
 
