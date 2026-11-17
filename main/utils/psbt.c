@@ -1,6 +1,7 @@
 #ifndef AMALGAMATED_BUILD
 #include "psbt.h"
 #include "../keychain.h"
+#include "../musig2.h"
 #include "../sensitive.h"
 #include "../wallet.h"
 #include "jade_assert.h"
@@ -222,6 +223,13 @@ static bool key_iter_is_supported_taproot(const key_iter* iter, const struct wal
     }
     if (iter->is_input) {
         const struct wally_psbt_input* input = &iter->psbt->inputs[iter->index];
+        if (musig2_input_present(input)) {
+            // Ruby: a MuSig2 input (Advanced Delegated / Advanced Multi Signature group): our key is one of its
+            // participants; signed only with the MuSig2 nonces of round 1 (see musig2.h)
+            const struct wally_map_item* key = &keypaths->items[0];
+            return keypaths->num_items == 1 && key->key && key->key_len == EC_XONLY_PUBLIC_KEY_LEN
+                && musig2_input_check(iter->psbt, iter->index, key->key);
+        }
         if (input->taproot_leaf_scripts.num_items) {
             // Ruby: a script-path spend. Accepted only for multi_a leaves holding our key that the coin spent
             // really commits to (see key_iter_is_taproot_scriptpath); signed per leaf in sign_psbt.

@@ -10,6 +10,7 @@ The RPC messages are in [docs/index.rst](docs/index.rst) ("Ruby specific").
 | One approval for every fee level of a payment (`sign_psbt` `fee_options`) | `7a3753b6` | `main/process/sign_psbt.c`, `main/ui/sign_tx.c` |
 | Key path of an output that also has scripts (Delegated owner) | `df8fcebc` | `main/utils/psbt.c` |
 | Script path of `multi_a` leaves (Delegated member, Multi Signature) | `69392994` | `main/utils/psbt.c`, `main/process/sign_psbt.c` |
+| MuSig2 groups: round 1 `musig2_nonces`, round 2 in `sign_psbt`, registration of MuSig2 leaves | (this branch, `musig2-ruby`) | `main/musig2.[ch]`, `main/process/musig2_nonces.c`, `main/process/sign_psbt.c`, `main/utils/psbt.c` (key iterator), `main/group.[ch]` (types 3 and 4), `main/process/register_group.c`, `main/process/get_registered_groups.c`, `main/ui/group.c`, `main/keychain.c` (wipe), `main/process/dashboard.c`, `main/process.c` and `main/utils/temporary_stack.c` (allow-lists), `main/amalgamated.c` |
 | Group registration: Ruby recognises the group's change | `be9f95d7` | `main/group.[ch]`, `main/process/register_group.c`, `main/process/get_registered_groups.c`, `main/ui/group.c`, `main/process/sign_psbt.c`, `main/process/get_receive_address.c`, `main/process/dashboard.c`, `main/process/debug_clean.c`, `main/process.c` (reply allowed), `main/storage.[ch]`, `main/process/register_multisig.c` and `register_descriptor.c` (storage reserve), `main/amalgamated.c` and `components/libwally-core/CMakeLists.txt` (`ENABLE_MODULE_MUSIG`) |
 
 ## 1. The groups
@@ -31,6 +32,17 @@ the child `i` of every chain key. The descriptor of a whole chain (what Bitcoin 
     Multi Signature:  tr(musig(A/*,B/*,C/*),{sortedmulti_a(k,...),...})            (BIP390)
 
 with the tree written exactly as in section 4.
+
+The **MuSig2 groups** (2026-11-17; the library's `DelegatedMultiSig2` / `TaprootMultiSig2`) are built the same way,
+but each leaf is ONE key, the BIP327 aggregate of the `k` keys of its combination, signed live by those `k` signers
+together (section 2.4):
+
+- **Advanced Delegated Multi Signature** (app GroupType 80): the internal key is the owner's key, as in Delegated.
+- **Advanced Multi Signature** (app GroupType 90): the internal key is the aggregate of every signer, as in Multi
+  Signature, but here it is used: when ALL the signers are present they spend by the key path.
+
+    Advanced Delegated:        tr(owner/*,{pk(musig(A/*,B/*)),{pk(musig(A/*,C/*)),pk(musig(B/*,C/*))}})   (BIP390)
+    Advanced Multi Signature:  tr(musig(A/*,B/*,C/*),{pk(musig(A/*,B/*)),...})
 
 ## 2. Signing
 
@@ -63,6 +75,33 @@ them with that one approval, but only for an option that spends **the same coins
 the same order**, except that **one output gets less, or is dropped, by exactly the extra fee** (normally the
 change; when everything is sent, the payment). Anything else is refused or asked again.
 
+### 2.4 MuSig2 groups: two rounds (2026-11-17)
+
+The owner of an Advanced Delegated group pays alone by the key path exactly as in 2.1 (nothing new in the firmware).
+Every other payment of a MuSig2 group is signed in a **signing room** of the app: the `k` signers present (or all of
+them, key path of an Advanced Multi Signature group) exchange nonces, then partial signatures (BIP327). Ruby takes
+part as one signer (`main/musig2.c`):
+
+1. **Round 1, `musig2_nonces`** (no screen: making nonces signs nothing). The psbt's MuSig2 inputs carry, as BIP373
+   fields (libwally keeps them among the input's unknown fields): the participants (`0x1a`, key = the plain aggregate
+   key), Ruby's key with its origin, and either the one leaf `<x-only aggregate> OP_CHECKSIG` with its control block
+   (script path) or the aggregate as the internal key with the merkle root (key path). The key iterator accepts such
+   an input only if (`musig2_input_check`): the participants aggregate (KeyAgg, in the order given) to the key named,
+   Ruby's key is one of them, and the leaf is committed in the coin spent / the tweaked internal key is the coin's
+   output key. Ruby then makes its nonces for each input: BIP327 NonceGen with fresh randomness, its secret key, the
+   BIP341 sighash and the aggregate key. The **secret nonces stay in RAM only** (never in storage: a copy brought back
+   could reuse a nonce, which gives the key away), for ONE payment; the public nonces are returned.
+2. **Round 2, `sign_psbt`** of the same payment with every participant's public nonce (`0x1b`). Ruby shows the
+   payment as usual (outputs, fee; a registered group's change is hidden) and, once the user accepts it, checks that
+   each input is exactly what its nonce was made for (key, aggregate, leaf, sighash) and that the psbt carries Ruby's
+   own public nonce, aggregates the nonces and makes its partial signature (`0x1c`), verified before it is returned.
+
+The secret nonces are wiped by that `sign_psbt` whatever happens (signed, declined, refused), by the next
+`musig2_nonces`, by a lock or logout (`keychain_clear`), and after 10 minutes. So a nonce is never used twice: a
+retry starts again from round 1. The work of each input (KeyAgg of up to 32 keys, sighash, NonceGen, the partial
+signature and its check) runs on a 12 KB temporary stack (`musig2_check_task`, `musig2_nonce_task`,
+`musig2_sign_task`: all three are in the `temp_task_wrapper` allow-list).
+
 ## 3. Group registration
 
 ### 3.1 Why
@@ -89,10 +128,11 @@ Stored in the NVS namespace `DCGROUPS`, under a name of at most 15 characters (t
 characters of the SHA-256 of the group's two descriptors, so a group whose keys change gets a new name). Layout,
 version 1:
 
-    version(1) network(1) type(1: 1 Delegated, 2 Multi Signature) k(1) n(1) flags(1: bit 0 = Ruby is the owner)
+    version(1) network(1) type(1: 1 Delegated, 2 Multi Signature, 3 Advanced Delegated, 4 Advanced Multi Signature)
+    k(1) n(1) flags(1: bit 0 = Ruby is the owner)
     label_len(1) label                          the group's name, shown on Ruby (at most 40 printable characters)
     2 x [ path_len(1) path(4 x path_len LE) ]   Ruby's receiving and change chain paths
-    Delegated: owner receiving xpub(78) owner change xpub(78)
+    Delegated and Advanced Delegated: owner receiving xpub(78) owner change xpub(78)
     n x receiving xpub(78)   n x change xpub(78)   signers, sorted (4.1)
     hmac(32)                                    HMAC-SHA256 of the above with the wallet's master key
 
@@ -108,14 +148,16 @@ Exactly as the library (NBitcoin `DelegatedMultiSig.FromExtPubKeys` / `TaprootMu
    fingerprint, child number, chain code, key), each derived at `i` (not hardened). Each key is derived once.
 2. **Leaves**: one per `k`-combination of the signers, in lexicographic order over the sorted signers. The keys of a
    leaf in x-only order: `<x1> OP_CHECKSIG <x2> OP_CHECKSIGADD ... OP_k OP_NUMEQUAL`, leaf version 0xc0, TapLeaf
-   hash.
+   hash. MuSig2 groups: `<x-only KeyAgg(KeySort(the keys of the combination))> OP_CHECKSIG` (one key aggregation per
+   leaf: measured on the QEMU emulator, an address takes about 0.3 s with 3 leaves and 4.4 s with 462).
 3. **Tree**: `tree(S) = leaf` if `S` has one script, else `{tree(first ceil(|S|/2)), tree(the rest)}`; a branch is
    TapBranch of its two hashes in lexicographic order. The leaves are produced in order while the tree is walked,
    so no list of leaves is kept. The walk is not recursive (an explicit stack of at most 11 nodes on the heap), and
    the whole calculation runs on a temporary 10 KB stack (up to about 7.4 KB measured, with the MuSig key aggregation) (`run_in_temporary_task`, as Jade does for descriptors): a
    first version that recursed on the main task's stack crashed from about 900 leaves (the callers, eg.
    `get_receive_address`, leave only about 4.8 KB of it).
-4. **Internal key**: Delegated: the owner's chain key derived at `i`. Multi Signature: BIP327 `KeyAgg` of the
+4. **Internal key**: Delegated and Advanced Delegated: the owner's chain key derived at `i`. Multi Signature and
+   Advanced Multi Signature: BIP327 `KeyAgg` of the
    signers' keys in `KeySort` order (33-byte compressed), with secp256k1-zkp's MuSig module (enabled for this:
    `ENABLE_MODULE_MUSIG`).
 5. **Output**: the internal key tweaked with the merkle root (BIP341); the address is P2TR of it.
@@ -146,8 +188,9 @@ different (the owner included), `2 <= n <= 15`, `C(n,k) <= 2000`, and **Ruby's o
 are the owner's or one signer's on both chains** ("This Ruby is not a participant of the group" otherwise). It
 calculates the first receiving and change addresses, then shows:
 
-1. **Register Group**: the group's name, its type and `k of n` ("Delegated 2 of 3"), and Ruby's role ("You are the
-   owner", "You are a member", "You are a signer"). Yes / No (No selected).
+1. **Register Group**: the group's name, its type and `k of n` ("Delegated 2 of 3", "Adv. Delegated 2 of 3", "Adv.
+   Multi Signature 2 of 3"), and Ruby's role ("You are the owner", "You are a member", "You are a signer"). Yes / No
+   (No selected).
 2. **Group Address 1**: the first receiving address of the group, to compare with the one the wallet shows. ✓ / X.
 
 An identical registration answers at once without asking; a different one under the same name says "Replaces the
@@ -184,14 +227,22 @@ Jade only runs functions it lists, and a function missing from a list stops the 
 it just stops answering, with no log):
 
 - a **reply** encoder passed to `jade_process_reply_to_message_result` must be in `reply_fn_is_allowed`
-  (`main/process.c`): `reply_registered_groups` is there;
+  (`main/process.c`): `reply_registered_groups` and `reply_musig2_nonces` are there;
 - a function run on a **temporary stack** (`run_in_temporary_task`) must be in the list of `temp_task_wrapper`
-  (`main/utils/temporary_stack.c`): `group_get_script_task` is there.
+  (`main/utils/temporary_stack.c`): `group_get_script_task`, `musig2_check_task`, `musig2_nonce_task` and `musig2_sign_task` are there.
 
 To see such an assertion, build the CI emulator with `--log-cbor`: the log comes over the RPC connection (jadepy
 logs it; `RubyClient.Log` receives it).
 
 ## 5. Tests
+
+- MuSig2 (2026-11-17): `TESTRUBY_GROUPS=musig2 dotnet run -c Release -- groups tcp:127.0.0.1:<port>` (`MuSig2Tests`):
+  registration of MuSig2 groups (Ruby's addresses = the library's, 2 to 15 signers, up to 462 leaves); the owner of
+  an Advanced Delegated group pays alone; signing rooms with Ruby and software signers: Advanced Delegated by a leaf
+  (Ruby first and last), Advanced Multi Signature by the key path (everybody) and by a leaf, all mined, the change
+  recognised; refusals: nonces replaced by another payment, no second signature with the same nonces, a round 2
+  without Ruby's own nonce (and no retry with it), Ruby not a signer, and the firmware's own checks with altered
+  psbts (participants, aggregate key, a leaf not in the coin).
 
 - `TestRuby` (NBitcoin fork), CI emulator with the firmware log over the RPC connection
   (`--dev --ci --m5basic --log-cbor`; without `--log-cbor` the checks that read the log are skipped):

@@ -12,6 +12,9 @@
 //    the keys of a leaf in x-only order: <x1> CHECKSIG <x2> CHECKSIGADD ... OP_k NUMEQUAL, leaf version 0xc0.
 //  - tree: the defined tree: tree(S) = leaf if S has one script, else { tree(first ceil(|S|/2)), tree(rest) }.
 //  - internal key: Delegated = the owner's key derived at i; Multi Signature = BIP327 KeyAgg(KeySort(signer keys)).
+//  - the MuSig2 groups (2026-11-17, NBitcoin DelegatedMultiSig2 / TaprootMultiSig2): the same signers, combinations,
+//    tree and internal key (Advanced Delegated: the owner's; Advanced Multi Signature: KeyAgg of every signer), but
+//    each leaf is ONE key: <x-only KeyAgg(KeySort(the keys of the combination))> OP_CHECKSIG.
 //  - output key: the internal key tweaked with the merkle root (BIP341); the address is P2TR of it.
 // The same wallet is the standard descriptor tr(owner/*,{sortedmulti_a(k,...),...}) (Delegated) or
 // tr(musig(...)/*,{...}) (Multi Signature, BIP390), but the record is kept compact and the address is calculated
@@ -27,6 +30,8 @@
 
 #define GROUP_TYPE_DELEGATED 1
 #define GROUP_TYPE_MULTISIG 2
+#define GROUP_TYPE_MUSIG2_DELEGATED 3 // Advanced Delegated Multi Signature (MuSig2 leaves, owner key path)
+#define GROUP_TYPE_MUSIG2_MULTISIG 4 // Advanced Multi Signature (MuSig2 leaves, KeyAgg of every signer key path)
 
 #define GROUP_CHAIN_RECEIVING 0
 #define GROUP_CHAIN_CHANGE 1
@@ -82,5 +87,10 @@ bool group_load_from_storage(const char* name, group_data_t* group, const char**
 
 // Type names for the screens and replies
 const char* group_type_name(uint8_t type);
+const char* group_type_rpc_name(uint8_t type);
+
+// The group has an owner (Delegated, Advanced Delegated); its leaves are MuSig2 keys (the Advanced groups)
+bool group_type_has_owner(uint8_t type);
+bool group_type_is_musig2(uint8_t type);
 
 #endif /* GROUP_H_ */

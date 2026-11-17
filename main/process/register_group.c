@@ -20,8 +20,8 @@
 // Ruby: register a DistributedCryptography Taproot group (see group.h and RUBY-GROUPS.md)
 //
 // params: network, group_name (storage key, <= 15 chars), label (shown on Ruby, <= 40 chars),
-//         type ("delegated" | "multisig"), threshold (k),
-//         owner: { receiving: xpub, change: xpub }              (delegated only)
+//         type ("delegated" | "multisig" | "musig2-delegated" | "musig2-multisig"), threshold (k),
+//         owner: { receiving: xpub, change: xpub }              (delegated and musig2-delegated only)
 //         signers: [ { receiving: xpub, change: xpub }, ... ]  (the members / every signer, any order)
 //         receiving_path, change_path: this Ruby's chain paths (its key in the group is one of the xpubs above)
 
@@ -78,20 +78,25 @@ static bool group_rpc_parse(
         return false;
     }
 
-    char type[16];
+    char type[24]; // "musig2-delegated" + nul
     written = 0;
     rpc_get_string("type", sizeof(type), params, type, &written);
     if (written && !strcmp(type, "delegated")) {
         group->type = GROUP_TYPE_DELEGATED;
     } else if (written && !strcmp(type, "multisig")) {
         group->type = GROUP_TYPE_MULTISIG;
+    } else if (written && !strcmp(type, "musig2-delegated")) {
+        group->type = GROUP_TYPE_MUSIG2_DELEGATED;
+    } else if (written && !strcmp(type, "musig2-multisig")) {
+        group->type = GROUP_TYPE_MUSIG2_MULTISIG;
     } else {
         *errmsg = "Invalid group type";
         return false;
     }
 
     uint32_t threshold = 0;
-    if (!rpc_get_uint32("threshold", params, &threshold) || !threshold || threshold > MAX_GROUP_SIGNERS) {
+    if (!rpc_get_uint32("threshold", params, &threshold) || !threshold || threshold > MAX_GROUP_SIGNERS
+        || (group_type_is_musig2(group->type) && threshold < 2)) {
         *errmsg = "Invalid threshold";
         return false;
     }
@@ -100,7 +105,7 @@ static bool group_rpc_parse(
     const uint32_t version
         = network_to_type(network_id) == NETWORK_TYPE_MAIN ? BIP32_VER_MAIN_PUBLIC : BIP32_VER_TEST_PUBLIC;
 
-    if (group->type == GROUP_TYPE_DELEGATED) {
+    if (group_type_has_owner(group->type)) {
         CborValue owner;
         if (!rpc_get_map("owner", params, &owner)
             || !group_rpc_get_chain_xpubs(&owner, version, &group->owner[GROUP_CHAIN_RECEIVING], &group->owner[GROUP_CHAIN_CHANGE])) {
@@ -143,7 +148,7 @@ static bool group_rpc_parse(
     // Every key of a chain different (owner included)
     for (size_t c = 0; c < 2; ++c) {
         for (size_t i = 0; i < num_signers; ++i) {
-            if (group->type == GROUP_TYPE_DELEGATED && group_same_key(&group->signers[c][i], &group->owner[c])) {
+            if (group_type_has_owner(group->type) && group_same_key(&group->signers[c][i], &group->owner[c])) {
                 *errmsg = "The owner is also a signer";
                 return false;
             }
@@ -158,7 +163,7 @@ static bool group_rpc_parse(
 
     // This Ruby's chains: its xpubs at the given paths must be the owner's or one signer's (on both chains)
     const char* path_fields[2] = { "receiving_path", "change_path" };
-    bool owner_match = group->type == GROUP_TYPE_DELEGATED;
+    bool owner_match = group_type_has_owner(group->type);
     bool signer_match = true;
     for (size_t c = 0; c < 2; ++c) {
         if (!rpc_get_bip32_path(path_fields[c], params, group->chain_path[c], MAX_PATH_LEN - 1, &group->chain_path_len[c])

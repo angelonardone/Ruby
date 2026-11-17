@@ -3,6 +3,7 @@
 #include "aes.h"
 #include "jade_assert.h"
 #include "jade_wally_verify.h"
+#include "musig2.h"
 #include "random.h"
 #include "sensitive.h"
 #include "storage.h"
@@ -67,6 +68,9 @@ void keychain_set(const keychain_t* src, const uint8_t userdata, const bool temp
 
 void keychain_clear(void)
 {
+    // Ruby: the MuSig2 secret nonces of a payment go with the wallet
+    musig2_clear();
+
     if (keychain_data) {
         JADE_WALLY_VERIFY(wally_bzero(keychain_data, sizeof(keychain_t)));
         keychain_data = NULL;

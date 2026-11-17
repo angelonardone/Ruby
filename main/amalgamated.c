@@ -14,7 +14,7 @@ void __wrap_abort(void);
 #define ENABLE_MODULE_ECDH 1
 #define ENABLE_MODULE_ECDSA_S2C 1
 #define ENABLE_MODULE_EXTRAKEYS 1
-#define ENABLE_MODULE_MUSIG 1 // Ruby: BIP327 KeyAgg of Multi Signature groups (group.c)
+#define ENABLE_MODULE_MUSIG 1 // Ruby: BIP327 KeyAgg of Multi Signature groups (group.c), MuSig2 signing (musig2.c)
 #define ENABLE_MODULE_RECOVERY 1
 #define ENABLE_MODULE_SCHNORRSIG 1
 #define HAVE_BUILTIN_POPCOUNT 1
@@ -31,6 +31,7 @@ void __wrap_abort(void);
 #endif
 #include "./descriptor.c"
 #include "./group.c"
+#include "./musig2.c"
 #include "./display.c"
 #include "./display_hw.c"
 #include "./fonts/BigFont.c"
@@ -86,6 +87,7 @@ void __wrap_abort(void);
 #include "./process/get_registered_descriptor.c"
 #include "./process/get_registered_descriptors.c"
 #include "./process/get_registered_groups.c"
+#include "./process/musig2_nonces.c"
 #include "./process/get_registered_multisig.c"
 #include "./process/get_registered_multisigs.c"
 #include "./process/get_xpubs.c"

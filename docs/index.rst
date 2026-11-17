@@ -1828,6 +1828,7 @@ Used for the Taproot groups of the DistributedCryptography wallet (see RUBY-GROU
 
 * A taproot input spent by the **key path of an output that also has scripts** (PSBT_IN_TAP_MERKLE_ROOT present, one key, no leaf hashes) is signed only if the coin spent is exactly P2TR of that key tweaked with that merkle root.
 * A taproot input spent by a **script path** (PSBT_IN_TAP_LEAF_SCRIPT present) is signed only if every leaf hash of Ruby's key (at most 128) names a leaf script of the psbt (leaf version 0xc0) that is a BIP342 multi_a script holding Ruby's key, and whose control block proves the leaf is committed in the coin spent. Each leaf is signed with the tapscript sighash and the signature is added as PSBT_IN_TAP_SCRIPT_SIG.
+* A taproot input with **MuSig2 participants** (BIP373 PSBT_IN_MUSIG2_PARTICIPANT_PUBKEYS, 0x1a) is round 2 of a MuSig2 group payment (see musig2_nonces_request_): it is signed only with the nonces Ruby made for it, after the user accepted the payment; the partial signature is added as PSBT_IN_MUSIG2_PARTIAL_SIG (0x1c).
 * Optional 'fee_options': the same payment at other fees, so a group's last signer can choose one.
 
 .. code-block:: cbor
@@ -1851,7 +1852,7 @@ Used for the Taproot groups of the DistributedCryptography wallet (see RUBY-GROU
 register_group request
 ----------------------
 
-Registers a DistributedCryptography Taproot group (Delegated or Multi Signature), so Ruby recognises the group's own addresses: in a payment of that group its change is not shown for confirmation.  The user confirms the group and its first address on the device.  Ruby keeps the keys once each and calculates the addresses itself (main/group.c).  Up to 24 groups, as long as the storage keeps its reserve.
+Registers a DistributedCryptography Taproot group (Delegated, Multi Signature, or one of the MuSig2 groups: Advanced Delegated, Advanced Multi Signature), so Ruby recognises the group's own addresses: in a payment of that group its change is not shown for confirmation.  The user confirms the group and its first address on the device.  Ruby keeps the keys once each and calculates the addresses itself (main/group.c).  Up to 24 groups, as long as the storage keeps its reserve.
 
 .. code-block:: cbor
 
@@ -1876,8 +1877,8 @@ Registers a DistributedCryptography Taproot group (Delegated or Multi Signature)
     }
 
 * 'group_name' is the storage name, at most 15 characters; 'label' is shown on Ruby, at most 40 printable characters.
-* 'type' is 'delegated' (the internal key is the owner's key) or 'multisig' (the internal key is the BIP327 MuSig2 aggregate of all the signers; no 'owner').
-* 'threshold' is k: every k-combination of the signers is one multi_a leaf.  2 to 15 signers, at most 2000 combinations.
+* 'type' is 'delegated' (the internal key is the owner's key) or 'multisig' (the internal key is the BIP327 MuSig2 aggregate of all the signers; no 'owner'); 'musig2-delegated' and 'musig2-multisig' are the same, but each leaf is ONE key, the BIP327 aggregate of the combination (<x-only KeyAgg(KeySort(keys))> OP_CHECKSIG).
+* 'threshold' is k: every k-combination of the signers is one leaf (a multi_a script, or the MuSig2 key of the combination; k >= 2 for the MuSig2 types).  2 to 15 signers, at most 2000 combinations.  A MuSig2 address costs one key aggregation per leaf (measured on the emulator: about 0.3 s for 3 leaves, 4.4 s for 462).
 * 'owner' and 'signers' are the chain extended public keys of every participant (any order: Ruby sorts the signers as the wallet does).
 * 'receiving_path' / 'change_path' are Ruby's own chain paths: Ruby's xpubs there must be the owner's or one signer's, on both chains.
 * Using an existing name with other keys replaces the record (the user is told); an identical registration answers 'true' at once.
@@ -1948,6 +1949,49 @@ get_receive_address for a registered group
     }
 
 * 'branch' 0 is the group's receiving chain, 1 its change chain; 'pointer' is the address number.  Ruby calculates the address, shows it for confirmation and returns it.
+
+.. _musig2_nonces_request:
+
+musig2_nonces request
+---------------------
+
+Round 1 of a MuSig2 group payment (Advanced Delegated / Advanced Multi Signature groups, RUBY-GROUPS.md section 2.4).  Nothing is shown: making nonces signs nothing.  Ruby checks every MuSig2 input, makes its nonces (BIP327 NonceGen with fresh randomness, Ruby's secret key, the BIP341 sighash and the aggregate key) and keeps the SECRET nonces in RAM only, for the 'sign_psbt' of the same payment (round 2).  One payment at a time: a new 'musig2_nonces' replaces the nonces of the previous one.  They are also wiped by that 'sign_psbt' (signed, declined or refused), by a lock or logout, and after 10 minutes.
+
+.. code-block:: cbor
+
+    {
+        "id": "7004",
+        "method": "musig2_nonces",
+        "params": {
+            "network": "localtest",
+            "psbt": <psbt bytes>
+        }
+    }
+
+A MuSig2 input carries (BIP371 + BIP373):
+
+* PSBT_IN_MUSIG2_PARTICIPANT_PUBKEYS (0x1a): key = 0x1a || the plain aggregate key (33 bytes), value = the participants' compressed keys in KeyAgg order.  Ruby aggregates them and they must give that key.
+* Ruby's key with its origin (PSBT_IN_TAP_BIP32_DERIVATION); Ruby's key must be one of the participants.
+* Script path: ONE leaf <x-only aggregate> OP_CHECKSIG (PSBT_IN_TAP_LEAF_SCRIPT) with a control block that proves it is committed in the coin spent, named by Ruby's key's leaf hash.
+* Key path: the aggregate as the internal key (PSBT_IN_TAP_INTERNAL_KEY) and the merkle root (PSBT_IN_TAP_MERKLE_ROOT): tweaked (BIP341) it must be the coin's output key.  No leaf hash for Ruby's key.
+
+At most 32 inputs and 32 participants; only the default sighash.
+
+.. _musig2_nonces_reply:
+
+musig2_nonces reply
+-------------------
+
+.. code-block:: cbor
+
+    {
+        "id": "7004",
+        "result": [<66 bytes>, <66 bytes>, <0 bytes>]
+    }
+
+* One entry per input: Ruby's public nonce, or empty for an input Ruby does not sign.
+* Round 2 is a 'sign_psbt' of the same payment with every participant's public nonce (PSBT_IN_MUSIG2_PUB_NONCE, 0x1b: key = 0x1b || participant (33) || aggregate (33) [|| leaf hash (32)], value = 66 bytes).  Ruby's own must be the one it made.  The reply has Ruby's partial signature (PSBT_IN_MUSIG2_PARTIAL_SIG, 0x1c, same key layout), checked by Ruby before it is returned.
+* Errors: 'No MuSig2 input of this Ruby in the payment', 'Only MuSig2 inputs can be in a MuSig2 payment', 'Too many inputs for a MuSig2 payment'; in round 2: 'Ruby has no MuSig2 nonces for this payment: start the signing again', 'The payment does not carry the MuSig2 nonce this Ruby made'.
 
 Indices and tables
 ==================

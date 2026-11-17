@@ -47,7 +47,7 @@ void reply_registered_groups(const void* ctx, CborEncoder* container)
         JADE_ASSERT(cberr == CborNoError);
 
         add_string_to_map(&entry_encoder, "label", desc->label);
-        add_string_to_map(&entry_encoder, "type", desc->type == GROUP_TYPE_DELEGATED ? "delegated" : "multisig");
+        add_string_to_map(&entry_encoder, "type", group_type_rpc_name(desc->type));
         add_uint_to_map(&entry_encoder, "threshold", desc->threshold);
         add_uint_to_map(&entry_encoder, "num_signers", desc->num_signers);
         add_boolean_to_map(&entry_encoder, "owner", desc->owner);

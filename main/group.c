@@ -9,6 +9,8 @@
 #include "utils/util.h"
 #include "wallet.h"
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <sodium/utils.h>
 #include <string.h>
 
@@ -51,8 +53,33 @@ static inline void group_uint32_from_le(const uint8_t* buffer, uint32_t* val)
 
 const char* group_type_name(const uint8_t type)
 {
-    return type == GROUP_TYPE_DELEGATED ? "Delegated" : type == GROUP_TYPE_MULTISIG ? "Multi Signature" : "Unknown";
+    return type == GROUP_TYPE_DELEGATED       ? "Delegated"
+        : type == GROUP_TYPE_MULTISIG         ? "Multi Signature"
+        : type == GROUP_TYPE_MUSIG2_DELEGATED ? "Adv. Delegated"
+        : type == GROUP_TYPE_MUSIG2_MULTISIG  ? "Adv. Multi Signature"
+                                              : "Unknown";
 }
+
+const char* group_type_rpc_name(const uint8_t type)
+{
+    return type == GROUP_TYPE_DELEGATED       ? "delegated"
+        : type == GROUP_TYPE_MULTISIG         ? "multisig"
+        : type == GROUP_TYPE_MUSIG2_DELEGATED ? "musig2-delegated"
+        : type == GROUP_TYPE_MUSIG2_MULTISIG  ? "musig2-multisig"
+                                              : "unknown";
+}
+
+bool group_type_has_owner(const uint8_t type)
+{
+    return type == GROUP_TYPE_DELEGATED || type == GROUP_TYPE_MUSIG2_DELEGATED;
+}
+
+bool group_type_is_musig2(const uint8_t type)
+{
+    return type == GROUP_TYPE_MUSIG2_DELEGATED || type == GROUP_TYPE_MUSIG2_MULTISIG;
+}
+
+static bool musig_key_agg(const uint8_t (*compressed)[EC_PUBLIC_KEY_LEN], size_t n, uint8_t* xonly_out);
 
 size_t group_num_leaves(const size_t n, size_t k)
 {
@@ -105,14 +132,39 @@ typedef struct {
     size_t n;
     size_t k;
     const uint8_t (*xonly)[XONLY_LEN]; // the signers' derived x-only keys, in signer order
+    const uint8_t (*compressed)[EC_PUBLIC_KEY_LEN]; // the same keys compressed (MuSig2 leaves)
+    bool musig2; // each leaf is <KeyAgg of the combination> OP_CHECKSIG
     uint8_t combination[MAX_GROUP_SIGNERS];
     size_t leaves_left;
 } leaf_iter_t;
+
+// TapLeaf hash of a MuSig2 leaf: <x-only KeyAgg(KeySort(keys of the combination))> OP_CHECKSIG
+static bool musig2_leaf_hash(const leaf_iter_t* it, uint8_t* hash_out)
+{
+    uint8_t keys[MAX_GROUP_SIGNERS][EC_PUBLIC_KEY_LEN];
+    for (size_t i = 0; i < it->k; ++i) {
+        memcpy(keys[i], it->compressed[it->combination[i]], EC_PUBLIC_KEY_LEN);
+    }
+    uint8_t buf[2 + 1 + XONLY_LEN + 1];
+    buf[0] = TAPLEAF_VERSION_TAPSCRIPT;
+    buf[1] = 1 + XONLY_LEN + 1;
+    buf[2] = XONLY_LEN;
+    buf[3 + XONLY_LEN] = OP_CHECKSIG;
+    return musig_key_agg((const uint8_t(*)[EC_PUBLIC_KEY_LEN])keys, it->k, buf + 3)
+        && wally_bip340_tagged_hash(buf, sizeof(buf), "TapLeaf", hash_out, SHA256_LEN) == WALLY_OK;
+}
 
 static bool next_leaf_hash(leaf_iter_t* it, uint8_t* hash_out)
 {
     if (!it->leaves_left) {
         return false;
+    }
+
+    if (it->musig2) {
+        if (!musig2_leaf_hash(it, hash_out)) {
+            return false;
+        }
+        goto next_combination;
     }
 
     // BIP387 sortedmulti_a: the keys of this combination in x-only order
@@ -154,6 +206,7 @@ static bool next_leaf_hash(leaf_iter_t* it, uint8_t* hash_out)
         return false;
     }
 
+next_combination:
     // Next combination
     --it->leaves_left;
     if (it->leaves_left) {
@@ -299,13 +352,13 @@ static bool group_get_script_impl(
 
     // The internal key
     uint8_t internal[XONLY_LEN];
-    if (ok && group->type == GROUP_TYPE_DELEGATED) {
+    if (ok && group_type_has_owner(group->type)) {
         ok = bip32_key_from_parent(&group->owner[chain], index, BIP32_FLAG_KEY_PUBLIC | BIP32_FLAG_SKIP_HASH, &child)
             == WALLY_OK;
         if (ok) {
             memcpy(internal, child.pub_key + 1, XONLY_LEN);
         }
-    } else if (ok && group->type == GROUP_TYPE_MULTISIG) {
+    } else if (ok && (group->type == GROUP_TYPE_MULTISIG || group->type == GROUP_TYPE_MUSIG2_MULTISIG)) {
         ok = musig_key_agg((const uint8_t(*)[EC_PUBLIC_KEY_LEN])compressed, n, internal);
     } else {
         ok = false;
@@ -314,7 +367,12 @@ static bool group_get_script_impl(
     // The merkle root of the defined tree
     uint8_t merkle_root[SHA256_LEN];
     if (ok) {
-        leaf_iter_t it = { .n = n, .k = k, .xonly = (const uint8_t(*)[XONLY_LEN])xonly, .leaves_left = num_leaves };
+        leaf_iter_t it = { .n = n,
+            .k = k,
+            .xonly = (const uint8_t(*)[XONLY_LEN])xonly,
+            .compressed = (const uint8_t(*)[EC_PUBLIC_KEY_LEN])compressed,
+            .musig2 = group_type_is_musig2(group->type),
+            .leaves_left = num_leaves };
         for (size_t i = 0; i < k; ++i) {
             it.combination[i] = (uint8_t)i;
         }
@@ -342,7 +400,7 @@ static bool group_get_script_impl(
 // The address is calculated on a temporary stack of its own (as Jade does for descriptors): the callers (eg.
 // get_receive_address, sign_psbt) already use much of the main task's stack, and key derivation, MuSig key
 // aggregation and hashing need a few KB more.
-#define GROUP_SCRIPT_STACK_SIZE (10 * 1024) // measured: up to ~7.4 KB used (Multi Signature, KeyAgg)
+#define GROUP_SCRIPT_STACK_SIZE (12 * 1024) // measured: ~7.4 KB (Multi Signature); MuSig2 leaves: KeyAgg per leaf
 
 typedef struct {
     const group_data_t* group;
@@ -355,7 +413,12 @@ typedef struct {
 bool group_get_script_task(void* ctx)
 {
     const group_script_args_t* args = (const group_script_args_t*)ctx;
-    return group_get_script_impl(args->group, args->chain, args->index, args->script, args->script_len);
+    const TickType_t start = xTaskGetTickCount();
+    const bool ok = group_get_script_impl(args->group, args->chain, args->index, args->script, args->script_len);
+    JADE_LOGI("Group %s address %u: %u ms, %u bytes of stack left", group_type_name(args->group->type),
+        (unsigned)args->index, (unsigned)((xTaskGetTickCount() - start) * portTICK_PERIOD_MS),
+        (unsigned)uxTaskGetStackHighWaterMark(NULL));
+    return ok;
 }
 
 bool group_get_script(
@@ -405,7 +468,7 @@ size_t group_record_len(const group_data_t* group)
     JADE_ASSERT(group);
     const size_t label_len = strlen(group->label);
     JADE_ASSERT(label_len <= MAX_GROUP_LABEL_LEN);
-    const size_t num_xpubs = 2 * group->num_signers + (group->type == GROUP_TYPE_DELEGATED ? 2 : 0);
+    const size_t num_xpubs = 2 * group->num_signers + (group_type_has_owner(group->type) ? 2 : 0);
     return 7 + label_len + 2 + 4 * (group->chain_path_len[0] + group->chain_path_len[1])
         + num_xpubs * BIP32_SERIALIZED_LEN + HMAC_SHA256_LEN;
 }
@@ -436,7 +499,7 @@ bool group_to_bytes(const group_data_t* group, uint8_t* output, const size_t out
             p += sizeof(uint32_t);
         }
     }
-    if (group->type == GROUP_TYPE_DELEGATED) {
+    if (group_type_has_owner(group->type)) {
         for (size_t c = 0; c < 2; ++c) {
             JADE_WALLY_VERIFY(bip32_key_serialize(&group->owner[c], BIP32_FLAG_KEY_PUBLIC, p, BIP32_SERIALIZED_LEN));
             p += BIP32_SERIALIZED_LEN;
@@ -501,9 +564,9 @@ bool group_from_bytes(const uint8_t* bytes, const size_t bytes_len, group_data_t
     p += label_len;
 
     const size_t num_leaves = group_num_leaves(group->num_signers, group->threshold);
-    if ((group->type != GROUP_TYPE_DELEGATED && group->type != GROUP_TYPE_MULTISIG) || group->num_signers < 2
+    if (group->type < GROUP_TYPE_DELEGATED || group->type > GROUP_TYPE_MUSIG2_MULTISIG || group->num_signers < 2
         || group->num_signers > MAX_GROUP_SIGNERS || !num_leaves || num_leaves > MAX_GROUP_LEAVES
-        || (group->we_are_owner && group->type != GROUP_TYPE_DELEGATED)) {
+        || (group->we_are_owner && !group_type_has_owner(group->type))) {
         return false;
     }
 
@@ -519,7 +582,7 @@ bool group_from_bytes(const uint8_t* bytes, const size_t bytes_len, group_data_t
             p += sizeof(uint32_t);
         }
     }
-    if (group->type == GROUP_TYPE_DELEGATED) {
+    if (group_type_has_owner(group->type)) {
         for (size_t c = 0; c < 2; ++c) {
             NEED(BIP32_SERIALIZED_LEN);
             if (bip32_key_unserialize(p, BIP32_SERIALIZED_LEN, &group->owner[c]) != WALLY_OK) {

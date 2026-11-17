@@ -136,6 +136,7 @@ void get_registered_descriptor_process(void* process_ptr);
 void register_descriptor_process(void* process_ptr);
 void register_group_process(void* process_ptr); // Ruby
 void get_registered_groups_process(void* process_ptr); // Ruby
+void musig2_nonces_process(void* process_ptr); // Ruby
 void get_receive_address_process(void* process_ptr);
 void get_identity_pubkey_process(void* process_ptr);
 void get_identity_shared_key_process(void* process_ptr);
@@ -584,6 +585,9 @@ static void dispatch_message(jade_process_t* process)
             task_function = register_group_process;
         } else if (IS_METHOD("get_registered_groups")) {
             task_function = get_registered_groups_process;
+        } else if (IS_METHOD("musig2_nonces")) {
+            // Ruby: MuSig2 round 1 of a group payment (see musig2.h)
+            task_function = musig2_nonces_process;
         } else if (IS_METHOD("get_receive_address")) {
             task_function = get_receive_address_process;
         } else if (IS_METHOD("get_identity_pubkey")) {

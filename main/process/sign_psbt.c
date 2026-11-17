@@ -6,6 +6,7 @@
 #include "../jade_wally_verify.h"
 #include "../keychain.h"
 #include "../multisig.h"
+#include "../musig2.h"
 #include "../process.h"
 #include "../sensitive.h"
 #include "../storage.h"
@@ -1060,6 +1061,8 @@ int sign_psbt(jade_process_t* process, CborValue* params, const network_t networ
     char group_name[NVS_KEY_NAME_MAX_SIZE] = { '\0' };
     group_data_t* group = NULL;
     bool group_change_abandoned = false;
+    // Ruby: MuSig2 inputs (round 2): whatever happens, Ruby's secret nonces are wiped at the end
+    bool has_musig2_inputs = false;
     for (size_t index = 0; index < psbt->num_inputs; ++index) {
         struct wally_psbt_input* input = &psbt->inputs[index];
 
@@ -1093,8 +1096,10 @@ int sign_psbt(jade_process_t* process, CborValue* params, const network_t networ
 
         // Ruby: a Taproot group input (script path, or key path with a merkle root): validated by the key iterator
         const uint32_t psbt_in_tap_merkle_root = 0x18; // From BIP-174
+        const bool is_musig2_input = musig2_input_present(input);
+        has_musig2_inputs = has_musig2_inputs || is_musig2_input;
         const bool is_group_input = sig_type == WALLY_SIGTYPE_SW_V1
-            && (input->taproot_leaf_scripts.num_items
+            && (is_musig2_input || input->taproot_leaf_scripts.num_items
                 || wally_map_get_integer(&input->psbt_fields, psbt_in_tap_merkle_root));
 
         const size_t num_keys = key_iter_get_num_keys(&iter);
@@ -1335,6 +1340,21 @@ int sign_psbt(jade_process_t* process, CborValue* params, const network_t networ
 
         JADE_LOGD("Signing input %u", index);
 
+        if (musig2_input_present(&psbt->inputs[index])) {
+            // Ruby: a MuSig2 input: our partial signature with the nonces of round 1 (musig2.h)
+            key_iter_input_begin(psbt, index, &iter);
+            if (!iter.is_valid) {
+                *errmsg = "Failed to generate signature";
+                retval = CBOR_RPC_INTERNAL_ERROR;
+                goto cleanup;
+            }
+            if (!musig2_sign_input(psbt, index, tx, &iter.hdkey, errmsg)) {
+                retval = CBOR_RPC_BAD_PARAMETERS;
+                goto cleanup;
+            }
+            continue;
+        }
+
         if (psbt->inputs[index].taproot_leaf_scripts.num_items) {
             // Ruby: a script-path input (accepted by the key iterator only for multi_a leaves holding our key):
             // signed per leaf, never by the key path
@@ -1390,6 +1410,9 @@ int sign_psbt(jade_process_t* process, CborValue* params, const network_t networ
 
 cleanup:
     SENSITIVE_POP(&iter);
+    if (has_musig2_inputs) {
+        musig2_clear();
+    }
     free(group);
     free(descriptor);
     free(multisig_data);

@@ -19,7 +19,7 @@ static void group_summary_lines(const group_data_t* group, char* kind, const siz
         group->num_signers);
     JADE_ASSERT(ret > 0 && ret < kind_len);
     *role = group->we_are_owner                        ? "You are the owner"
-        : group->type == GROUP_TYPE_DELEGATED ? "You are a member"
+        : group_type_has_owner(group->type) ? "You are a member"
                                               : "You are a signer";
 }
 

@@ -16,6 +16,9 @@ bool descriptor_to_address_impl(void* ctx);
 bool descriptor_to_script_impl(void* ctx);
 bool parse_psbt_bytes(void* ctx);
 bool group_get_script_task(void* ctx); // Ruby: group addresses (group.c)
+bool musig2_check_task(void* ctx); // Ruby: MuSig2 (musig2.c)
+bool musig2_nonce_task(void* ctx);
+bool musig2_sign_task(void* ctx);
 
 // Helper to run function which may require a larger amount of stack space in a temporary task.
 // Function protected by a mutex so can only be running once (prevents excessive memory
@@ -48,7 +51,8 @@ static void temp_task_wrapper(void* ctx)
     JADE_ASSERT(args);
     bool is_allowed = args->fn == &descriptor_search_for_script_impl || args->fn == &descriptor_to_address_impl
         || args->fn == &descriptor_to_script_impl || args->fn == &parse_psbt_bytes
-        || args->fn == &group_get_script_task;
+        || args->fn == &group_get_script_task || args->fn == &musig2_check_task || args->fn == &musig2_nonce_task
+        || args->fn == &musig2_sign_task;
     JADE_ASSERT(is_allowed);
 #endif // CONFIG_DEBUG_MODE / CONFIG_LIBJADE / SELFCHECK
 
