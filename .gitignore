@@ -17,3 +17,6 @@ dist/
 jade_client.egg-info/
 docs/_build/
 **/nvs_flash.bin
+
+# Fuzzing output (corpus grown by the fuzzer, crash inputs, logs): never committed
+fuzz/out/

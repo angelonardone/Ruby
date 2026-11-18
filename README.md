@@ -19,6 +19,9 @@ Multi Signature by the script path, one approval for every fee level) and can re
 is recognised: see [RUBY-GROUPS.md](./RUBY-GROUPS.md). The RPC messages Ruby adds to Jade's are in
 [docs/index.rst](./docs/index.rst) ("Ruby specific").
 
+The code that reads data sent by the host is fuzzed on a PC (clang + libFuzzer + sanitizers, with libwally built
+as on the device): see [fuzz/README.md](./fuzz/README.md).
+
 The original Jade documentation follows.
 
 ---

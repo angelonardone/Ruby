@@ -1,0 +1,6 @@
+*
+!components/libwally-core
+!tests/rpc/data/sign_psbt
+!fuzz
+fuzz/build
+fuzz/out
