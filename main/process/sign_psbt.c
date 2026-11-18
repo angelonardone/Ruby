@@ -31,6 +31,7 @@
 #include "sign_utils.h"
 
 bool deserialise_psbt(const uint8_t* bytes, size_t bytes_len, struct wally_psbt** psbt_out);
+bool serialise_psbt(const struct wally_psbt* psbt, uint8_t** output, size_t* output_len);
 
 // Ruby - group payments with pre-signed fee levels (DistributedCryptography, 2026-11-13).
 // The member who starts a group payment signs the same payment once per fee option, so that the last signer can
@@ -1457,6 +1458,22 @@ bool deserialise_psbt(const uint8_t* bytes, const size_t bytes_len, struct wally
     } else if (!memcmp(bytes, PSBT_MAGIC_PREFIX, sizeof(PSBT_MAGIC_PREFIX))) {
         // PSBT - can parse immediately
         ret = parse_psbt_bytes(&data);
+    }
+    if (ret) {
+        // Ruby: refuse a PSBT that libwally parses but cannot serialise back (eg. a non_witness_utxo
+        // with no outputs). Otherwise the user would review, confirm and sign it, and only then get
+        // "Failed to serialise sign psbt". Found by fuzzing: fuzz/README.md, finding F2.
+        // Peak memory is no higher than the serialisation done after signing.
+        uint8_t* check = NULL;
+        size_t check_len = 0;
+        if (serialise_psbt(data.psbt_out, &check, &check_len) && check_len) {
+            free(check);
+        } else {
+            JADE_LOGE("PSBT parsed but does not serialise");
+            JADE_WALLY_VERIFY(wally_psbt_free(data.psbt_out));
+            data.psbt_out = NULL;
+            ret = false;
+        }
     }
     if (ret) {
         *psbt_out = data.psbt_out;

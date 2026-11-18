@@ -84,7 +84,7 @@ Research.
 |---|---|---|---|
 | `fuzz_psbt_from_bytes` | libwally `upstream/fuzz/` (unchanged) | a PSBT, with STRICT, LOOSE and default flags, then serialises it | the 248 PSBTs of libwally's `psbt.json` + the 21 PSBTs of `tests/rpc/data/sign_psbt/` |
 | `fuzz_tx_from_bytes` | libwally `upstream/fuzz/` (unchanged) | a transaction, with every tx flag | the transactions inside those PSBTs |
-| `fuzz_psbt_ruby_flags` | `harness/` | a PSBT **as Ruby parses it** (`deserialise_psbt()`: STRICT \| COMPLETE), then `serialise_psbt()`; checks that what Ruby sends back parses again and serialises to the same bytes | same PSBTs |
+| `fuzz_psbt_ruby_flags` | `harness/` | a PSBT **as Ruby accepts it** (`deserialise_psbt()`: STRICT \| COMPLETE parse that also serialises, see F2), then `serialise_psbt()`; checks that what Ruby sends back parses again and serialises to the same bytes | same PSBTs |
 
 Results of 2026-11-18 (Docker on the Windows dev PC, one core per target, 300 s each, after the fixes below), all PASS:
 
@@ -107,19 +107,22 @@ parses every PSBT with STRICT | COMPLETE, which refuses it first. Fixed in libwa
 `release_1.6.1`); our submodule is `release_1.5.6-11-g3bf543cd`. Suppressed in `known-issues.supp` until the submodule
 reaches 1.6.1 (upstream Jade bumps it; we merge upstream).
 
-**F2: Ruby accepts a PSBT it cannot send back. Open, low impact, firmware check proposed.** `fuzz_psbt_ruby_flags`
+**F2: Ruby accepted a PSBT it could not send back. Fixed in the firmware (2026-11-18).** `fuzz_psbt_ruby_flags`
 after a few seconds (input: `regressions/fuzz_psbt_ruby_flags/f2-non-witness-utxo-without-outputs`): a PSBT whose
 `PSBT_IN_NON_WITNESS_UTXO` is a transaction **with no outputs** passes STRICT | COMPLETE parsing (the input parser
 uses `WALLY_TX_FLAG_ALLOW_PARTIAL`), but `wally_psbt_to_bytes()` refuses it (`WALLY_EINVAL`: the utxo is serialised
 without ALLOW_PARTIAL). On libwally 1.5.6 `wally_psbt_get_length()` even returns a length for it; on libwally master
-(2026-11-18) `get_length` fails too, but the parser still accepts the PSBT. On Ruby: no memory error and no crash
-(`serialise_psbt()` checks both calls), but `sign_psbt` can show the payment, let the user confirm and sign, and only
-then answer `CBOR_RPC_INTERNAL_ERROR` "Failed to serialise sign psbt": the amounts and scripts come from
-`wally_psbt_get_input_best_utxo()`, which prefers the input's `witness_utxo`, so the empty `non_witness_utxo` is never
-looked at before signing (code reading, not yet run on the emulator). A malicious or buggy host can only waste a
-confirmation (the signatures never leave Ruby). Proposed fix (not applied, needs a decision): in `deserialise_psbt()`
-also serialise the PSBT once and refuse it as `CBOR_RPC_BAD_PARAMETERS` before any screen; then build the harness with
-`-DRUBY_REQUIRE_SERIALISABLE`. Worth reporting to libwally as well (parser and serialiser disagree).
+(2026-11-18) `get_length` fails too, but the parser still accepts the PSBT. No memory error and no crash
+(`serialise_psbt()` checks both calls), but `sign_psbt` went through the whole signing (review, confirmation,
+signatures: the amounts and scripts come from `wally_psbt_get_input_best_utxo()`, which prefers the `witness_utxo`)
+and only then answered `-32603 CBOR_RPC_INTERNAL_ERROR` "Failed to serialise sign psbt". Seen on the QEMU emulator
+(image of `110ee7a9`, CI auto-confirm). A malicious or buggy host could only waste a confirmation (the signatures never
+left Ruby).
+Fix: `deserialise_psbt()` (`main/process/sign_psbt.c`, used by `sign_psbt`, `musig2_nonces`, QR and USB storage) also
+serialises the PSBT once and refuses it when that fails, so the host gets `-32602 CBOR_RPC_BAD_PARAMETERS` "Failed to
+extract psbt from passed bytes" before any screen (checked on the emulator). The harness now mirrors that check and
+asserts that every PSBT Ruby accepts round-trips. Worth reporting to libwally as well (parser and serialiser
+disagree).
 
 ## Crashes in a public repo
 
@@ -144,7 +147,7 @@ This repository is public, and a crash input for the firmware is an exploit hint
 
 ## Next steps (roadmap §12.8 order)
 
-1. ~~libwally's fuzzers + confirm `modinv32`~~ done 2026-11-18 (this folder; F1, F2).
+1. ~~libwally's fuzzers + confirm `modinv32`~~ done 2026-11-18 (this folder; F1, F2 fixed in the firmware).
    Left over: on the QEMU image, check what an unaligned 32-bit load does on the ESP32 and list the callers of
    `wally_ripemd160` / ccan `ripemd160` with 64+ bytes (see "Why `AVOID_UNALIGNED_ACCESS`").
 2. Host harnesses for Ruby's own parsers: `main/musig2.c` (`musig2_input_load` / `musig2_input_check`, the BIP373

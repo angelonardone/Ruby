@@ -4,15 +4,11 @@
  * back as serialise_psbt() does. libwally's own fuzz_psbt_from_bytes covers the other
  * flag combinations.
  *
- * Properties checked besides memory safety:
- * - when the PSBT serialises, its serialisation parses again with Ruby's flags and gives
- *   the same bytes once more (what Ruby returns to the host is a PSBT Ruby would accept);
- * - with -DRUBY_REQUIRE_SERIALISABLE: every PSBT Ruby accepts can be serialised.
- *   Off for now: libwally (1.5.6 and master of 2026-11-18) accepts a PSBT whose
- *   non_witness_utxo has no outputs but refuses to serialise it, so Ruby would show the
- *   payment, let the user confirm it, then answer "Failed to serialise sign psbt".
- *   Finding F2 in fuzz/README.md. Turn it on together with the firmware check proposed
- *   there (deserialise_psbt() refusing a PSBT that does not serialise).
+ * Properties checked besides memory safety, on every PSBT deserialise_psbt() accepts
+ * (STRICT | COMPLETE parse that also serialises back: the check added for finding F2):
+ * - its serialisation parses again with Ruby's flags (what Ruby returns to the host is a
+ *   PSBT Ruby would accept);
+ * - serialising that again gives the same bytes (serialisation is stable).
  */
 #include <stdlib.h>
 #include <string.h>
@@ -48,9 +44,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         return 0;
 
     if (!(bytes = serialise(psbt, &len))) {
-#ifdef RUBY_REQUIRE_SERIALISABLE
-        abort(); /* Ruby accepted a PSBT it cannot send back */
-#endif
+        /* deserialise_psbt() refuses it (finding F2): nothing more to check */
         wally_psbt_free(psbt);
         return 0;
     }
