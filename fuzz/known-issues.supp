@@ -1,14 +1,6 @@
 # LeakSanitizer suppressions for bugs that are known, understood and NOT reachable on Ruby.
 # fuzz/run.sh passes this file in LSAN_OPTIONS. Every entry says why it is safe and when
 # to remove it. Never add an entry for a bug in Ruby's own code: fix it instead.
-
-# libwally 1.5.6 (our submodule, 3bf543cd): wally_psbt_from_bytes() with
-# WALLY_PSBT_PARSE_FLAG_LOOSE leaks the input/output arrays of a PSBT that carries
-# PSBT_GLOBAL_UNSIGNED_TX before PSBT_GLOBAL_VERSION = 2 (psbt_set_global_tx() allocates
-# them, the v2 path overwrites the pointers). Found by fuzz_psbt_from_bytes on 2026-11-18
-# with the vector "PSBTv0 but with PSBT_GLOBAL_VERSION set to 2" of libwally's psbt.json.
-# Not reachable on Ruby: Ruby parses every PSBT with STRICT | COMPLETE
-# (main/process/sign_psbt.c, deserialise_psbt()), which refuses that PSBT first.
-# Fixed upstream in libwally 10f41d80 (2026-11-08, release_1.6.1).
-# REMOVE when components/libwally-core/upstream is at release_1.6.1 or later.
-leak:psbt_set_global_tx
+#
+# Empty since libwally release_1.6.1: its only entry was F1 (leak:psbt_set_global_tx,
+# fixed by libwally 10f41d80), see fuzz/README.md.

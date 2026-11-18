@@ -82,7 +82,7 @@ Research.
 
 | Target | Source | What it reads | Seeds |
 |---|---|---|---|
-| `fuzz_psbt_from_bytes` | libwally `upstream/fuzz/` (unchanged) | a PSBT, with STRICT, LOOSE and default flags, then serialises it | the 248 PSBTs of libwally's `psbt.json` + the 21 PSBTs of `tests/rpc/data/sign_psbt/` |
+| `fuzz_psbt_from_bytes` | libwally `upstream/fuzz/` (unchanged) | a PSBT, with STRICT, LOOSE and default flags, then serialises it | the PSBTs of libwally's `psbt.json` + those of `tests/rpc/data/sign_psbt/` (294 distinct seeds on libwally 1.6.1) |
 | `fuzz_tx_from_bytes` | libwally `upstream/fuzz/` (unchanged) | a transaction, with every tx flag | the transactions inside those PSBTs |
 | `fuzz_psbt_ruby_flags` | `harness/` | a PSBT **as Ruby accepts it** (`deserialise_psbt()`: STRICT \| COMPLETE parse that also serialises, see F2), then `serialise_psbt()`; checks that what Ruby sends back parses again and serialises to the same bytes | same PSBTs |
 
@@ -94,18 +94,28 @@ Results of 2026-11-18 (Docker on the Windows dev PC, one core per target, 300 s 
 | `fuzz_tx_from_bytes` | 28 120 326 | 411 | 1 768 |
 | `fuzz_psbt_ruby_flags` | 8 632 850 | 1 231 | 1 748 |
 
+Same run on libwally `release_1.6.1` (branch `libwally-1.6.1`, no LSan suppression, fresh corpus, the QEMU suite
+running on the same PC at the same time), all PASS:
+
+| Target | Runs | Coverage (edges) | Corpus |
+|---|---|---|---|
+| `fuzz_psbt_from_bytes` | 2 990 058 | 1 249 | 1 459 |
+| `fuzz_tx_from_bytes` | 18 807 076 | 411 | 1 673 |
+| `fuzz_psbt_ruby_flags` | 6 035 788 | 1 234 | 1 082 |
+
 On the way there: F1 at once (initial corpus), F2 within seconds, and UBSan "misaligned load" in ccan's SHA-256
 within 5 minutes (host-only, see "Why `AVOID_UNALIGNED_ACCESS`").
 
 ## Findings
 
-**F1: leak in libwally's loose PSBT parsing. Not reachable on Ruby; fixed upstream.** `fuzz_psbt_from_bytes`, in its
+**F1: leak in libwally's loose PSBT parsing. Not reachable on Ruby; fixed by libwally 1.6.1.** `fuzz_psbt_from_bytes`, in its
 initial corpus (libwally's own vector "PSBTv0 but with PSBT_GLOBAL_VERSION set to 2"): with
 `WALLY_PSBT_PARSE_FLAG_LOOSE`, a PSBT that has `PSBT_GLOBAL_UNSIGNED_TX` *before* `PSBT_GLOBAL_VERSION = 2` makes
 `psbt_set_global_tx()` allocate the input/output arrays and the v2 path overwrite them (984 bytes per PSBT). Ruby
 parses every PSBT with STRICT | COMPLETE, which refuses it first. Fixed in libwally 10f41d80 (2026-11-08,
-`release_1.6.1`); our submodule is `release_1.5.6-11-g3bf543cd`. Suppressed in `known-issues.supp` until the submodule
-reaches 1.6.1 (upstream Jade bumps it; we merge upstream).
+`release_1.6.1`). It was suppressed in `known-issues.supp` while the submodule was `release_1.5.6-11-g3bf543cd`; since
+the submodule moved to `release_1.6.1` (2026-11-18, branch `libwally-1.6.1`) the suppression is gone and
+`fuzz_psbt_from_bytes` passes without it.
 
 **F2: Ruby accepted a PSBT it could not send back. Fixed in the firmware (2026-11-18).** `fuzz_psbt_ruby_flags`
 after a few seconds (input: `regressions/fuzz_psbt_ruby_flags/f2-non-witness-utxo-without-outputs`): a PSBT whose
