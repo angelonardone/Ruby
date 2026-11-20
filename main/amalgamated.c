@@ -32,6 +32,7 @@ void __wrap_abort(void);
 #include "./descriptor.c"
 #include "./group.c"
 #include "./musig2.c"
+#include "./codex32.c"
 #include "./display.c"
 #include "./display_hw.c"
 #include "./fonts/BigFont.c"
