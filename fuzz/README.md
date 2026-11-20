@@ -109,10 +109,11 @@ reaches 1.6.1 (upstream Jade bumps it; we merge upstream).
 
 **F2: Ruby accepted a PSBT it could not send back. Fixed in the firmware (2026-11-18).** `fuzz_psbt_ruby_flags`
 after a few seconds (input: `regressions/fuzz_psbt_ruby_flags/f2-non-witness-utxo-without-outputs`): a PSBT whose
-`PSBT_IN_NON_WITNESS_UTXO` is a transaction **with no outputs** passes STRICT | COMPLETE parsing (the input parser
-uses `WALLY_TX_FLAG_ALLOW_PARTIAL`), but `wally_psbt_to_bytes()` refuses it (`WALLY_EINVAL`: the utxo is serialised
-without ALLOW_PARTIAL). On libwally 1.5.6 `wally_psbt_get_length()` even returns a length for it; on libwally master
-(2026-11-18) `get_length` fails too, but the parser still accepts the PSBT. No memory error and no crash
+`PSBT_IN_NON_WITNESS_UTXO` is a transaction **with no outputs** passes STRICT | COMPLETE parsing (`wally_tx_from_bytes()`
+accepts a transaction with no outputs even without `WALLY_TX_FLAG_ALLOW_PARTIAL`), but `wally_psbt_to_bytes()` refuses
+it (`WALLY_EINVAL`: writing a transaction with no inputs or no outputs needs that flag). On libwally 1.5.6
+`wally_psbt_get_length()` even returns a length for it; on 1.6.1 and master (2026-11-18) `get_length` fails too, but
+the parser still accepts the PSBT. No memory error and no crash
 (`serialise_psbt()` checks both calls), but `sign_psbt` went through the whole signing (review, confirmation,
 signatures: the amounts and scripts come from `wally_psbt_get_input_best_utxo()`, which prefers the `witness_utxo`)
 and only then answered `-32603 CBOR_RPC_INTERNAL_ERROR` "Failed to serialise sign psbt". Seen on the QEMU emulator
