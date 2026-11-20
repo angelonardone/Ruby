@@ -5,7 +5,7 @@
        alt="Ruby running on an M5Stack Basic: the home screen says Ready and Initialized">
 </p>
 
-**Ruby** is the hardware-key firmware of DistributedCryptography, for generic ESP32 / ESP32-S3 boards.
+**Ruby** is the hardware-key firmware of [DistributedCryptography](https://distributedcryptography.com), for generic ESP32 / ESP32-S3 boards.
 It is **based on [Blockstream Jade](https://github.com/Blockstream/Jade)** and, like Jade, is licensed
 under the **GPL-3** (see [LICENSE](./LICENSE)).
 
