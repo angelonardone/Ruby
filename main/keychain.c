@@ -19,6 +19,13 @@
 // Size of keydata_t elements - ext-key, ga-path, master-blinding-key
 #define SERIALIZED_KEY_LEN (BIP32_SERIALIZED_LEN + HMAC_SHA512_LEN + HMAC_SHA512_LEN)
 
+// Ruby: what the encrypted blob holds, told apart by its decrypted length:
+//   16 / 32 bytes  BIP39 mnemonic entropy (wallet with a passphrase: the seed is derived at each unlock)
+//   64 bytes       the BIP32 seed (BIP39 seed or a restored seed); xpriv & co are derived from it at unlock
+//   206 bytes      xpriv + ga-path + master-blinding-key (upstream Jade; Ruby before 2026-11-20): NO seed after unlock
+// The seed is needed by Wallet Backup / TEV (codex32 split of the seed), identity and OTP.
+#define SEED_BLOB_LEN BIP32_ENTROPY_LEN_512
+
 // Encrypted length plus hmac (input length given)
 #define ENCRYPTED_DATA_LEN(len) (AES_ENCRYPTED_LEN(len) + HMAC_SHA256_LEN)
 
@@ -551,6 +558,7 @@ bool keychain_store(const uint8_t* aeskey, const size_t aeslen)
     SENSITIVE_PUSH(serialized, sizeof(serialized));
 
     // If we have cached mnemonic entropy, we store that (as the wallet is passphrase-protected)
+    // Ruby: otherwise, if we hold the 64-byte BIP32 seed, we store the seed (see SEED_BLOB_LEN)
     // Otherwise we store the master keychain data (classic)
     uint8_t* p_serialized_data;
     size_t serialized_data_len;
@@ -564,6 +572,12 @@ bool keychain_store(const uint8_t* aeskey, const size_t aeslen)
         JADE_ASSERT(mnemonic_entropy_len < sizeof(serialized));
         p_serialized_data = mnemonic_entropy;
         serialized_data_len = mnemonic_entropy_len;
+    } else if (keychain_data->seed_len == SEED_BLOB_LEN) {
+        // Ruby: use the BIP32 seed - everything else is derived from it when loading
+        JADE_ASSERT(SEED_BLOB_LEN < sizeof(serialized));
+        memcpy(serialized, keychain_data->seed, SEED_BLOB_LEN);
+        p_serialized_data = serialized;
+        serialized_data_len = SEED_BLOB_LEN;
     } else {
         // Use serialised keychain
         serialize(serialized, sizeof(serialized), keychain_data);
@@ -618,7 +632,15 @@ bool keychain_load(const uint8_t* aeskey, const size_t aeslen)
         // Write mnemonic entropy - only 12 or 24 word mnemonics are supported
         memcpy(mnemonic_entropy, serialized, serialized_data_len);
         mnemonic_entropy_len = serialized_data_len;
+    } else if (serialized_data_len == SEED_BLOB_LEN) {
+        // Ruby: the BIP32 seed - derive the keychain from it (the seed stays available, eg. for Wallet Backup)
+        keychain_t keydata = { 0 };
+        SENSITIVE_PUSH(&keydata, sizeof(keydata));
+        keychain_derive_from_seed(serialized, serialized_data_len, &keydata);
+        keychain_set(&keydata, 0, false);
+        SENSITIVE_POP(&keydata);
     } else if (serialized_data_len == SERIALIZED_KEY_LEN) {
+        // Classic xpriv blob (written before Ruby stored the seed): no seed available
         // Deserialise keychain
         keychain_t keydata = { 0 };
         SENSITIVE_PUSH(&keydata, sizeof(keydata));

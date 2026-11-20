@@ -31,6 +31,8 @@ static const char SERVICE_PATH_HEX[] = "00c9678fbd9d9f6a96bd43221d56733b5aba8f52
 // (Payload data is padded to next multiple of 16, and is concatenated between iv and hmac)
 // 16 (iv) + 208 (length of data stored (78 (key) + 64 (ga path) + 64 (blinding key)) padded to next 16x) + 32 (hmac)
 static const size_t FULL_KEY_BLOBLEN = 256;
+// Ruby: 16 (iv) + 80 (64-byte BIP32 seed padded to next 16x - a full block of padding) + 32 (hmac)
+static const size_t SEED_BLOBLEN = 128;
 // 16 (iv) + 32 (12-word entropy (16) padded to next 16x) + 32 (hmac)
 static const size_t MNEMONIC_12_ENTROPY_BLOBLEN = 80;
 // 16 (iv) + 48 (24-word entropy (32) padded to next 16x) + 32 (hmac)
@@ -173,7 +175,9 @@ static bool test_new_wallets(const size_t nwords)
 // Check 3 incorrect PIN attempts erases stored key data
 // NOTE: also tests loading legacy wallets
 // (master keys rather than mnemonic entropy)
-static bool test_storage_with_pin(jade_process_t* process)
+// Ruby: with 'legacy' false the keychain holds its seed, so the seed is stored (and is back after loading);
+// with 'legacy' true the seed is blanked first, so the classic xpriv blob is stored (no seed after loading).
+static bool test_storage_with_pin(jade_process_t* process, const bool legacy)
 {
     JADE_ASSERT(process);
 
@@ -182,6 +186,14 @@ static bool test_storage_with_pin(jade_process_t* process)
     if (!keychain_derive_from_mnemonic(TEST_MNEMONIC, NULL, &keydata)) {
         FAIL();
     }
+    if (keydata.seed_len != BIP32_ENTROPY_LEN_512) {
+        FAIL();
+    }
+    if (legacy) {
+        JADE_WALLY_VERIFY(wally_bzero(keydata.seed, sizeof(keydata.seed)));
+        keydata.seed_len = 0;
+    }
+    const size_t expected_blob_len = legacy ? FULL_KEY_BLOBLEN : SEED_BLOBLEN;
 
     uint8_t aeskey[AES_KEY_LEN_256];
     get_random(aeskey, AES_KEY_LEN_256);
@@ -199,13 +211,13 @@ static bool test_storage_with_pin(jade_process_t* process)
     }
     keychain_clear();
 
-    // At this point we should just have stored the full keychain in the blob
+    // At this point we should just have stored the seed (Ruby) or the full keychain (legacy) in the blob
     uint8_t blob[FULL_KEY_BLOBLEN];
     size_t blob_len = 0;
     if (!storage_get_encrypted_blob(blob, sizeof(blob), &blob_len)) {
         FAIL();
     }
-    if (blob_len != FULL_KEY_BLOBLEN) {
+    if (blob_len != expected_blob_len) {
         FAIL();
     }
 
@@ -219,7 +231,7 @@ static bool test_storage_with_pin(jade_process_t* process)
     if (keychain_pin_attempts_remaining() != 3) {
         FAIL();
     }
-    if (!all_fields_same(&keydata, keychain_get(), false)) {
+    if (!all_fields_same(&keydata, keychain_get(), !legacy)) {
         FAIL();
     }
 
@@ -256,7 +268,7 @@ static bool test_storage_with_pin(jade_process_t* process)
     if (!keychain_load(new_aeskey, sizeof(new_aeskey))) {
         FAIL();
     }
-    if (!all_fields_same(&keydata, keychain_get(), false)) {
+    if (!all_fields_same(&keydata, keychain_get(), !legacy)) {
         FAIL();
     }
     keychain_clear();
@@ -530,7 +542,10 @@ bool debug_selfcheck(jade_process_t* process)
 
     // Test can write and read-back key data from storage
     // Test that 3 bad PIN attempts erases stored keys
-    if (!test_storage_with_pin(process)) {
+    if (!test_storage_with_pin(process, false)) {
+        FAIL();
+    }
+    if (!test_storage_with_pin(process, true)) {
         FAIL();
     }
 
