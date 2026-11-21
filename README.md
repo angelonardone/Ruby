@@ -27,6 +27,10 @@ is recognised: see [RUBY-GROUPS.md](./RUBY-GROUPS.md). The RPC messages Ruby add
 The code that reads data sent by the host is fuzzed on a PC (clang + libFuzzer + sanitizers, with libwally built
 as on the device): see [fuzz/README.md](./fuzz/README.md).
 
+Ruby keeps the wallet's BIP32 seed, splits it on the device for a Wallet Backup or a Time Encrypted Vault (codex32, BIP-93; each contact's shares leave Ruby already encrypted to that contact) and can load a recovered wallet into a new Ruby.
+
+Ruby's versions (`ruby-1.0.0`, ...) and what each one adds to Jade: [RUBY-CHANGELOG.md](./RUBY-CHANGELOG.md).
+
 The original Jade documentation follows.
 
 ---

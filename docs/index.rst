@@ -1993,6 +1993,95 @@ musig2_nonces reply
 * Round 2 is a 'sign_psbt' of the same payment with every participant's public nonce (PSBT_IN_MUSIG2_PUB_NONCE, 0x1b: key = 0x1b || participant (33) || aggregate (33) [|| leaf hash (32)], value = 66 bytes).  Ruby's own must be the one it made.  The reply has Ruby's partial signature (PSBT_IN_MUSIG2_PARTIAL_SIG, 0x1c, same key layout), checked by Ruby before it is returned.
 * Errors: 'No MuSig2 input of this Ruby in the payment', 'Only MuSig2 inputs can be in a MuSig2 payment', 'Too many inputs for a MuSig2 payment'; in round 2: 'Ruby has no MuSig2 nonces for this payment: start the signing again', 'The payment does not carry the MuSig2 nonce this Ruby made'.
 
+.. _seed_split_request:
+
+seed_split request
+------------------
+
+Wallet Backup or Time Encrypted Vault of a Ruby wallet: Ruby splits its BIP32 seed (64 bytes, stored since the seed-storage change) with codex32 (BIP-93) on the device and returns each contact's shares already encrypted to that contact, so the seed and the shares never reach the host in clear.  Needs an unlocked Ruby whose wallet was set up with this firmware (a wallet set up before has no stored seed: 'This Ruby has no seed: set up the wallet again from its recovery words').
+
+.. code-block:: cbor
+
+    {
+        "id": "7101",
+        "method": "seed_split",
+        "params": {
+            "mode": "backup",
+            "threshold": 3,
+            "contacts": [
+                { "name": "User1", "pubkey": <33 bytes>, "shares": 1 },
+                { "name": "User2", "pubkey": <33 bytes>, "shares": 2 }
+            ]
+        }
+    }
+
+* 'mode' "backup": the seed is split, k-of-n.  "vault" (Time Encrypted Vault): Ruby makes a random pad of the seed length, returns 'masked' = seed XOR pad and splits the PAD.
+* 'threshold' k = 2..9; 1..31 contacts; 'shares' per contact >= 1; the total of shares is k..31.  All shares have one codex32 identifier, the seed itself (index 's') is never returned.
+* Ruby shows a summary (mode, k of n) and then every contact with its name, number of shares and its key (first 10 and last 8 hex characters), to be checked against the contact's own screen.  Declining any screen = 'User declined the split'.
+
+.. _seed_split_reply:
+
+seed_split reply
+----------------
+
+The 'result' is bytes: the CBOR encoding of
+
+.. code-block:: cbor
+
+    {
+        "contacts": [ { "key": <117 bytes>, "text": <bytes> }, ... ],
+        "masked": <64 bytes>
+    }
+
+* 'contacts' in the order of the request.  'text' = AES-256-GCM (nonce 12 | ciphertext | tag 16) of the JSON array of that contact's ms1 strings, with a random key; 'key' = that key as its base64 string, ECIES-encrypted to the contact's pubkey (BIE1, as NBitcoin PubKey.Encrypt).  This is the format of the wallet's EncryptJsonTo / DecryptJsonFor, so the contacts open it as any other share.
+* 'masked' only in "vault" mode.
+* When the reply is bigger than one message it comes in parts ('seqnum' / 'seqlen'); the next part is asked with 'get_extended_data', as for 'sign_psbt'.
+* Errors: 'Invalid mode (backup or vault)', 'Invalid threshold (2 to 9)', 'Invalid contacts (1 to 31)', 'Invalid contact pubkey', 'Two contacts have the same pubkey', 'Invalid number of shares of a contact', 'The shares must be at least the threshold and at most 31'.
+
+.. _restore_seed_request:
+
+restore_seed request
+--------------------
+
+Loads a wallet recovered by a Wallet Backup / Time Encrypted Vault group into a Ruby with NO wallet (a new Ruby or one reset: a Ruby holds one wallet).  Refused when Ruby has a PIN or a temporary wallet: 'This Ruby already has a wallet: connect a new Ruby or reset this one'.
+
+.. code-block:: cbor
+
+    {
+        "id": "7201",
+        "method": "restore_seed"
+    }
+
+The reply 'result' is a one-time public key (33 bytes) made for this restore.  The next message must be
+
+.. code-block:: cbor
+
+    {
+        "id": "7202",
+        "method": "restore_seed_data",
+        "params": {
+            "seed": <149 bytes>
+        }
+    }
+
+* 'seed' = the 64-byte BIP32 seed ECIES-encrypted to that one-time key (BIE1, as NBitcoin PubKey.Encrypt: "BIE1" | ephemeral key 33 | AES-128-CBC 80 | HMAC-SHA256 32).  The HMAC is checked before decrypting; a wrong, altered or stale (other one-time key) seed = 'Invalid encrypted seed'.
+* "cancel" instead ends the restore ('Restore cancelled'); any other message is a protocol error.  'restore_seed_data' without a 'restore_seed' first is refused.
+* Ruby shows "Restore Wallet - Load the recovered wallet on this Ruby? - Fingerprint XXXXXXXX" (the BIP32 master fingerprint, also shown by the app).  Declining = 'User declined the restore'.
+
+.. _restore_seed_reply:
+
+restore_seed reply
+------------------
+
+.. code-block:: cbor
+
+    {
+        "id": "7202",
+        "result": true
+    }
+
+* Accepted, Ruby keeps the wallet in memory only (JADE_STATE "UNSAVED", the Connect screen): no key is given before a PIN.  The next 'auth_user' sets the PIN (through the PIN oracle) and stores the seed, as after entering recovery words on Ruby.
+
 Indices and tables
 ==================
 
