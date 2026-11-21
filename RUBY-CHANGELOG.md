@@ -8,6 +8,12 @@ The firmware version shown on the device and returned as `JADE_VERSION` by `get_
 Jade's tags (`1.0.41`, …) are ignored, so merging upstream Jade does not change Ruby's version. The protocol keeps
 Jade's names (`JADE_VERSION`, `JADE_STATE`, …) on purpose: clients depend on them.
 
+## [Unreleased]
+
+- **Time Encrypted Vault bounty** ([RUBY-GROUPS.md §2.2b](./RUBY-GROUPS.md)): Ruby signs the bounty leaf
+  (`<date> CHECKLOCKTIMEVERIFY DROP HASH256 <hash> EQUALVERIFY <key> CHECKSIG`) by the script path, so a Ruby wallet
+  that is a bounty member can collect the bounty.
+
 ## [ruby-1.0.0] - 2026-11-21
 
 First Ruby version. Based on **Blockstream Jade 1.0.41** (all of its security fixes) and **libwally-core 1.6.1**.

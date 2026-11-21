@@ -10,6 +10,7 @@ The RPC messages are in [docs/index.rst](docs/index.rst) ("Ruby specific").
 | One approval for every fee level of a payment (`sign_psbt` `fee_options`) | `7a3753b6` | `main/process/sign_psbt.c`, `main/ui/sign_tx.c` |
 | Key path of an output that also has scripts (Delegated owner) | `df8fcebc` | `main/utils/psbt.c` |
 | Script path of `multi_a` leaves (Delegated member, Multi Signature) | `69392994` | `main/utils/psbt.c`, `main/process/sign_psbt.c` |
+| Script path of the bounty leaf of a Time Encrypted Vault | `8086d1d0` (branch `tev-bounty`) | `main/utils/psbt.c` |
 | MuSig2 groups: round 1 `musig2_nonces`, round 2 in `sign_psbt`, registration of MuSig2 leaves | (this branch, `musig2-ruby`) | `main/musig2.[ch]`, `main/process/musig2_nonces.c`, `main/process/sign_psbt.c`, `main/utils/psbt.c` (key iterator), `main/group.[ch]` (types 3 and 4), `main/process/register_group.c`, `main/process/get_registered_groups.c`, `main/ui/group.c`, `main/keychain.c` (wipe), `main/process/dashboard.c`, `main/process.c` and `main/utils/temporary_stack.c` (allow-lists), `main/amalgamated.c` |
 | Group registration: Ruby recognises the group's change | `be9f95d7` | `main/group.[ch]`, `main/process/register_group.c`, `main/process/get_registered_groups.c`, `main/ui/group.c`, `main/process/sign_psbt.c`, `main/process/get_receive_address.c`, `main/process/dashboard.c`, `main/process/debug_clean.c`, `main/process.c` (reply allowed), `main/storage.[ch]`, `main/process/register_multisig.c` and `register_descriptor.c` (storage reserve), `main/amalgamated.c` and `components/libwally-core/CMakeLists.txt` (`ENABLE_MODULE_MUSIG`) |
 
@@ -66,6 +67,23 @@ blocks (`PSBT_IN_TAP_LEAF_SCRIPT`, 0x15). Ruby signs only if (`key_iter_is_tapro
 Each leaf is signed with the BIP342 tapscript sighash (`SIGHASH_DEFAULT`) and the signature goes to
 `PSBT_IN_TAP_SCRIPT_SIG` (0x14, key = x-only key || leaf hash). Nothing is signed by the key path. libwally does not
 sign script paths, so `sign_taproot_script_path` in `sign_psbt.c` does it.
+
+### 2.2b Time Encrypted Vault bounty: script path (`8086d1d0`, 2026-11-21)
+
+The bounty of a Time Encrypted Vault (TEV) is a P2TR output: internal key = the owner's key, one leaf per bounty
+member
+
+    <restore date> OP_CHECKLOCKTIMEVERIFY OP_DROP OP_HASH256 <sha256d(KEY)> OP_EQUALVERIFY <member x-only key> OP_CHECKSIG
+
+A member collects it after the restore date by his leaf; the witness is signature, KEY, leaf, control block. The
+KEY is not signed (BIP342 signs the leaf), so Ruby only signs and the wallet adds the KEY. Same checks as §2.2, with
+one more accepted script shape (`tapscript_is_tev_bounty_with_key`): the date a direct push of 1 to 5 bytes (a
+positive number), the exact opcodes above, and Ruby's key as the key. Same signature (`SIGHASH_DEFAULT`, 0x14). No
+new screen: Ruby shows the output and the fee. The wallet sets the lock time and the input sequences; a lock time
+that does not satisfy the leaf only gives a transaction the network refuses.
+
+The owner takes the bounty back (or moves it to the address of a new restore date) by the key path with the merkle
+root of the members' leaves, §2.1, which Ruby 1.0.0 already signed.
 
 ### 2.3 Fee options: one approval for every fee level (`7a3753b6`)
 
@@ -253,5 +271,9 @@ logs it; `RubyClient.Log` receives it).
   the emulator's UART log); registrations stop with the reserve free; another wallet does not see the records.
   2026-11-16: 54 PASS (`TESTRUBY_GROUPS=registration`); the whole `groups` suite 99 PASS; the general suite 85
   PASS.
+- TEV bounty (2026-11-21): `dotnet run -c Release -- bounty tcp:127.0.0.1:<port>` (`TimeBountyTests`): a Ruby bounty
+  member (2 coins of 2 bounty addresses, script path) and a Ruby owner (key path) accepted by the RegTest node; the
+  leaf of another member, a wrong merkle root, other words and a bounty-like leaf with `OP_SHA256` refused: 12 PASS
+  (with 1.0.0 the member is not signed). The general suite (155 checks) and `groups` pass with this change.
 - Firmware suite (`main/qemu/qemu_ci_flash.sh`, image `--dev --ci --psram`): unchanged (177 passed; the same 8
   failed + 6 errors, PIN / pinserver, as before these changes).
