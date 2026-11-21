@@ -42,3 +42,16 @@ jobs:
         esp_idf_version: v5.5.5
         target: esp32s3
         command: ./tools/switch_to.sh jade_v2c --dev --log --jtag && idf.py size all
+
+  codex32_host_test:
+    # Ruby: main/codex32.c (BIP-93 split of the seed for Wallet Backup / TEV) on the host, with ASan/UBSan:
+    # the BIP test vectors, the invalid vectors, and random splits checked by the BIP's Python reference.
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v5
+    - name: Install clang
+      run: sudo apt-get update && sudo apt-get install -y clang python3
+    - name: codex32 host test
+      working-directory: tests/codex32
+      run: sh run.sh
