@@ -150,6 +150,7 @@ void show_bip85_bip39_entropy_process(void* process_ptr);
 void get_bip85_bip39_entropy_process(void* process_ptr);
 void get_utility_keys_process(void* process_ptr); // Ruby
 void seed_split_process(void* process_ptr); // Ruby
+void restore_seed_process(void* process_ptr); // Ruby
 #ifdef CONFIG_DEBUG_MODE
 void get_bip85_rsa_entropy_process(void* process_ptr);
 void debug_capture_image_data_process(void* process_ptr);
@@ -470,6 +471,7 @@ static void dispatch_message(jade_process_t* process)
     JADE_ASSERT(method_len != 0);
 
     TaskFunction_t task_function = NULL;
+    const jade_msg_source_t message_source = process->ctx.source;
 
     JADE_LOGD("dashboard dispatching message method='%.*s'", method_len, method);
 
@@ -498,6 +500,10 @@ static void dispatch_message(jade_process_t* process)
     } else if (IS_METHOD("auth_user")) {
         JADE_LOGD("Received auth-user request");
         task_function = auth_user_process;
+    } else if (IS_METHOD("restore_seed")) {
+        // Ruby: only on a Ruby with no wallet (checked in restore_seed.c), so before any PIN
+        JADE_LOGD("Received restore_seed request");
+        task_function = restore_seed_process;
     } else if (IS_METHOD("cancel")) {
         // 'cancel' is completely ignored (as nothing is 'in-progress' to cancel)
         JADE_LOGD("Received 'cancel' request - no-op");
@@ -618,7 +624,8 @@ static void dispatch_message(jade_process_t* process)
         } else if (IS_METHOD("show_bip85_bip39_entropy")) {
             task_function = show_bip85_bip39_entropy_process;
         } else if (IS_METHOD("ota_data") || IS_METHOD("ota_complete") || IS_METHOD("tx_input")
-            || IS_METHOD("get_extended_data") || IS_METHOD("get_signature") || IS_METHOD("pin")) {
+            || IS_METHOD("get_extended_data") || IS_METHOD("get_signature") || IS_METHOD("pin")
+            || IS_METHOD("restore_seed_data")) {
             // Method we only expect as part of a multi-message protocol
             jade_process_reject_message(process, CBOR_RPC_PROTOCOL_ERROR, "Unexpected method");
         } else {
@@ -641,6 +648,13 @@ static void dispatch_message(jade_process_t* process)
 
         // Then clean up after the process has finished
         cleanup_jade_process(&task_process);
+
+        // Ruby: a restored wallet is in memory, not yet associated with any connection: show the Connect-To screen
+        // (as after the recovery words are entered on Ruby) until the app sets the PIN with 'auth_user'
+        if (task_function == restore_seed_process && keychain_get() && keychain_get_userdata() == SOURCE_NONE) {
+            initialisation_source = message_source;
+            show_connect_screen = true;
+        }
 
         // When the authentication process exits clear any initialisation-source.
         // Also set the 'connect screen' flag if it looks like the auth failed,

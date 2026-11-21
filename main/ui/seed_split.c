@@ -67,4 +67,19 @@ bool show_seed_split_activity(const bool vault, const size_t threshold, const si
     }
     return true;
 }
+
+bool show_restore_seed_activity(const uint8_t* fingerprint, const size_t fingerprint_len)
+{
+    JADE_ASSERT(fingerprint);
+    JADE_ASSERT(fingerprint_len == 4);
+
+    // Upper case, as the wallet shows it
+    char fingerprint_line[24];
+    const int ret = snprintf(fingerprint_line, sizeof(fingerprint_line), "Fingerprint %02X%02X%02X%02X",
+        fingerprint[0], fingerprint[1], fingerprint[2], fingerprint[3]);
+    JADE_ASSERT(ret > 0 && ret < sizeof(fingerprint_line));
+
+    const char* message[] = { "Load the recovered", "wallet on this Ruby?", fingerprint_line };
+    return await_yesno_activity("Restore Wallet", message, 3, false, SEED_SPLIT_HELP_URL);
+}
 #endif // AMALGAMATED_BUILD

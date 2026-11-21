@@ -48,6 +48,38 @@
 
 static void seed_split_random(uint8_t* buf, const size_t len) { get_random(buf, len); }
 
+bool bie1_shared_keys(const uint8_t* privkey, const uint8_t* pubkey, uint8_t* keys, const size_t keys_len)
+{
+    JADE_ASSERT(privkey);
+    JADE_ASSERT(pubkey);
+    JADE_ASSERT(keys);
+    JADE_ASSERT(keys_len == SHA512_LEN);
+
+    uint8_t shared_point[EC_PUBLIC_KEY_LEN];
+    SENSITIVE_PUSH(shared_point, sizeof(shared_point));
+    secp256k1_pubkey point;
+    SENSITIVE_PUSH(&point, sizeof(point));
+
+    bool retval = false;
+    const secp256k1_context* ctx = (const secp256k1_context*)wally_get_secp_context();
+    if (!secp256k1_ec_pubkey_parse(ctx, &point, pubkey, EC_PUBLIC_KEY_LEN)
+        || !secp256k1_ec_pubkey_tweak_mul(ctx, &point, privkey)) {
+        goto cleanup;
+    }
+    size_t point_len = sizeof(shared_point);
+    if (!secp256k1_ec_pubkey_serialize(ctx, shared_point, &point_len, &point, SECP256K1_EC_COMPRESSED)
+        || point_len != sizeof(shared_point)) {
+        goto cleanup;
+    }
+    JADE_WALLY_VERIFY(wally_sha512(shared_point, sizeof(shared_point), keys, keys_len));
+    retval = true;
+
+cleanup:
+    SENSITIVE_POP(&point);
+    SENSITIVE_POP(shared_point);
+    return retval;
+}
+
 // NBitcoin PubKey.Encrypt: shared = SHA512(compressed ECDH point of an ephemeral key and 'pubkey');
 // iv = shared[0..16], AES-128-CBC (PKCS#7) key = shared[16..32], HMAC-SHA256 key = shared[32..64];
 // output "BIE1" | ephemeral pubkey | ciphertext | HMAC of everything before it.
@@ -62,26 +94,14 @@ static bool bie1_encrypt(const uint8_t* pubkey, const uint8_t* msg, const size_t
 
     uint8_t eph_privkey[EC_PRIVATE_KEY_LEN];
     SENSITIVE_PUSH(eph_privkey, sizeof(eph_privkey));
-    uint8_t shared_point[EC_PUBLIC_KEY_LEN];
-    SENSITIVE_PUSH(shared_point, sizeof(shared_point));
     uint8_t keys[SHA512_LEN];
     SENSITIVE_PUSH(keys, sizeof(keys));
-    secp256k1_pubkey point;
-    SENSITIVE_PUSH(&point, sizeof(point));
 
     bool retval = false;
-    const secp256k1_context* ctx = (const secp256k1_context*)wally_get_secp_context();
     if (!keychain_get_new_privatekey(eph_privkey, sizeof(eph_privkey))
-        || !secp256k1_ec_pubkey_parse(ctx, &point, pubkey, EC_PUBLIC_KEY_LEN)
-        || !secp256k1_ec_pubkey_tweak_mul(ctx, &point, eph_privkey)) {
+        || !bie1_shared_keys(eph_privkey, pubkey, keys, sizeof(keys))) {
         goto cleanup;
     }
-    size_t point_len = sizeof(shared_point);
-    if (!secp256k1_ec_pubkey_serialize(ctx, shared_point, &point_len, &point, SECP256K1_EC_COMPRESSED)
-        || point_len != sizeof(shared_point)) {
-        goto cleanup;
-    }
-    JADE_WALLY_VERIFY(wally_sha512(shared_point, sizeof(shared_point), keys, sizeof(keys)));
 
     memcpy(out, "BIE1", BIE1_MAGIC_LEN);
     JADE_WALLY_VERIFY(wally_ec_public_key_from_private_key(
@@ -98,9 +118,7 @@ static bool bie1_encrypt(const uint8_t* pubkey, const uint8_t* msg, const size_t
     retval = true;
 
 cleanup:
-    SENSITIVE_POP(&point);
     SENSITIVE_POP(keys);
-    SENSITIVE_POP(shared_point);
     SENSITIVE_POP(eph_privkey);
     return retval;
 }

@@ -36,6 +36,14 @@ typedef struct {
     size_t num_shares; // how many codex32 shares this contact gets (its votes)
 } seed_split_contact_t;
 
+// NBitcoin PubKey.Encrypt / Key.Decrypt ("BIE1"): SHA512 of the compressed ECDH point of 'privkey' and 'pubkey'
+// (iv = [0..16], AES-128-CBC key = [16..32], HMAC-SHA256 key = [32..64])
+bool bie1_shared_keys(const uint8_t* privkey, const uint8_t* pubkey, uint8_t* keys, size_t keys_len);
+
+// Ruby: RPC 'restore_seed' (process/restore_seed.c) loads a seed recovered by a Wallet Backup / TEV group into a
+// Ruby with no wallet. The screen shows the fingerprint of the recovered wallet; false if declined.
+bool show_restore_seed_activity(const uint8_t* fingerprint, size_t fingerprint_len);
+
 // The screens: the split (k of n, contacts), then every contact (name, shares, key); false if any is declined
 bool show_seed_split_activity(
     bool vault, size_t threshold, size_t total_shares, const seed_split_contact_t* contacts, size_t num_contacts);
