@@ -228,9 +228,9 @@ static bool get_fee_options(CborValue* params, const struct wally_tx* tx, const 
     return true;
 }
 
-// Ruby: sign a taproot input by its script path (Delegated group member, Multi Signature group): one BIP340
+// Ruby: sign a taproot input by its script path (Delegated group member, Multi Signature group, TEV bounty): one BIP340
 // signature of our (untweaked) key per leaf script our key's leaf hashes name, over the BIP342 tapscript sighash.
-// The leaves were checked by the key iterator (multi_a scripts holding our key, committed in the coin spent).
+// The leaves were checked by the key iterator (multi_a or TEV bounty leaves of our key, committed in the coin spent).
 // Each signature goes in the input as PSBT_IN_TAP_SCRIPT_SIG (key: x-only key || leaf hash).
 static bool sign_taproot_script_path(
     struct wally_psbt* psbt, const size_t index, const struct wally_tx* tx, const struct ext_key* hdkey)
@@ -1357,8 +1357,8 @@ int sign_psbt(jade_process_t* process, CborValue* params, const network_t networ
         }
 
         if (psbt->inputs[index].taproot_leaf_scripts.num_items) {
-            // Ruby: a script-path input (accepted by the key iterator only for multi_a leaves holding our key):
-            // signed per leaf, never by the key path
+            // Ruby: a script-path input (accepted by the key iterator only for multi_a or TEV bounty leaves of
+            // our key): signed per leaf, never by the key path
             key_iter_input_begin(psbt, index, &iter);
             if (!iter.is_valid || !sign_taproot_script_path(psbt, index, tx, &iter.hdkey)) {
                 *errmsg = "Failed to generate signature";

@@ -109,6 +109,41 @@ static bool tapscript_is_multi_a_with_key(const uint8_t* script, const size_t sc
     return found;
 }
 
+// Ruby: true if the script is the bounty leaf of a Time Encrypted Vault group and its key is the x-only key given:
+//   <restore date> OP_CHECKLOCKTIMEVERIFY OP_DROP OP_HASH256 <32-byte hash> OP_EQUALVERIFY <x-only key> OP_CHECKSIG
+// The date is a direct push of 1 to 5 bytes (a positive script number, as CLTV reads it). The witness also carries
+// the secret whose double SHA256 is the hash; Ruby only signs (BIP342: the signature covers the leaf, not the secret).
+static bool tapscript_is_tev_bounty_with_key(const uint8_t* script, const size_t script_len, const uint8_t* xonly)
+{
+    if (!script || script_len < 1) {
+        return false;
+    }
+    const size_t date_len = script[0];
+    if (date_len < 1 || date_len > 5) {
+        return false;
+    }
+    // date push, CLTV, DROP, HASH256, push 32 + hash, EQUALVERIFY, push 32 + key, CHECKSIG
+    if (script_len != 1 + date_len + 3 + 1 + SHA256_LEN + 1 + 1 + EC_XONLY_PUBLIC_KEY_LEN + 1) {
+        return false;
+    }
+    if (script[date_len] & 0x80) {
+        return false; // a negative number: never a valid lock time
+    }
+    const uint8_t* p = script + 1 + date_len;
+    if (p[0] != OP_CHECKLOCKTIMEVERIFY || p[1] != OP_DROP || p[2] != OP_HASH256 || p[3] != SHA256_LEN) {
+        return false;
+    }
+    p += 4 + SHA256_LEN;
+    if (p[0] != OP_EQUALVERIFY || p[1] != EC_XONLY_PUBLIC_KEY_LEN) {
+        return false;
+    }
+    p += 2;
+    if (p[EC_XONLY_PUBLIC_KEY_LEN] != OP_CHECKSIG) {
+        return false;
+    }
+    return !memcmp(p, xonly, EC_XONLY_PUBLIC_KEY_LEN);
+}
+
 // Ruby: BIP341 check that a leaf (by its hash) is committed in the P2TR coin spent, using its control block:
 // control block = (leaf version | output key parity) || internal key || merkle path (32 bytes per level, at most 128).
 static bool taproot_control_block_commits(const uint8_t* control, const size_t control_len, const uint8_t leaf_version,
@@ -176,11 +211,11 @@ const struct wally_map_item* psbt_find_taproot_leaf_script(
     return NULL;
 }
 
-// Ruby: an input spent by a script path (Delegated group member, Multi Signature group): our key signs the BIP342
-// multi_a leaf scripts its leaf hashes name. True only if: one key (x-only), at least one leaf hash for it, and for
-// every leaf hash a leaf script in the psbt that hashes to it (leaf version 0xc0), is a multi_a script holding our
-// key, and whose control block proves the leaf is committed in the coin spent (BIP341). Nothing is signed by the
-// key path.
+// Ruby: an input spent by a script path (Delegated group member, Multi Signature group, bounty member of a Time
+// Encrypted Vault): our key signs the BIP342 leaf scripts its leaf hashes name. True only if: one key (x-only), at
+// least one leaf hash for it, and for every leaf hash a leaf script in the psbt that hashes to it (leaf version
+// 0xc0), is a multi_a script holding our key or a TEV bounty leaf of our key, and whose control block proves the leaf
+// is committed in the coin spent (BIP341). Nothing is signed by the key path.
 static bool key_iter_is_taproot_scriptpath(const key_iter* iter, const struct wally_map* keypaths)
 {
     JADE_ASSERT(iter && iter->is_input);
@@ -207,7 +242,9 @@ static bool key_iter_is_taproot_scriptpath(const key_iter* iter, const struct wa
     }
     for (size_t off = 0; off < hashes->value_len; off += SHA256_LEN) {
         const struct wally_map_item* leaf = psbt_find_taproot_leaf_script(input, hashes->value + off, utxo);
-        if (!leaf || !tapscript_is_multi_a_with_key(leaf->value, leaf->value_len - 1, key->key)) {
+        if (!leaf
+            || !(tapscript_is_multi_a_with_key(leaf->value, leaf->value_len - 1, key->key)
+                || tapscript_is_tev_bounty_with_key(leaf->value, leaf->value_len - 1, key->key))) {
             return false;
         }
     }
@@ -231,7 +268,7 @@ static bool key_iter_is_supported_taproot(const key_iter* iter, const struct wal
                 && musig2_input_check(iter->psbt, iter->index, key->key);
         }
         if (input->taproot_leaf_scripts.num_items) {
-            // Ruby: a script-path spend. Accepted only for multi_a leaves holding our key that the coin spent
+            // Ruby: a script-path spend. Accepted only for multi_a or TEV bounty leaves of our key that the coin spent
             // really commits to (see key_iter_is_taproot_scriptpath); signed per leaf in sign_psbt.
             return key_iter_is_taproot_scriptpath(iter, keypaths);
         }
