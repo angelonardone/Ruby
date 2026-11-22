@@ -68,7 +68,7 @@ Each leaf is signed with the BIP342 tapscript sighash (`SIGHASH_DEFAULT`) and th
 `PSBT_IN_TAP_SCRIPT_SIG` (0x14, key = x-only key || leaf hash). Nothing is signed by the key path. libwally does not
 sign script paths, so `sign_taproot_script_path` in `sign_psbt.c` does it.
 
-### 2.2b Time Encrypted Vault bounty: script path (`8086d1d0`, 2026-11-21)
+### 2.2b Time Encrypted Vault bounty: script path (`8086d1d0`, ruby-1.0.1, 2026-11-21)
 
 The bounty of a Time Encrypted Vault (TEV) is a P2TR output: internal key = the owner's key, one leaf per bounty
 member

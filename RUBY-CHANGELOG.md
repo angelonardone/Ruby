@@ -8,7 +8,9 @@ The firmware version shown on the device and returned as `JADE_VERSION` by `get_
 Jade's tags (`1.0.41`, …) are ignored, so merging upstream Jade does not change Ruby's version. The protocol keeps
 Jade's names (`JADE_VERSION`, `JADE_STATE`, …) on purpose: clients depend on them.
 
-## [Unreleased]
+## [ruby-1.0.1] - 2026-11-21
+
+ruby-1.0.0 plus:
 
 - **Time Encrypted Vault bounty** ([RUBY-GROUPS.md §2.2b](./RUBY-GROUPS.md)): Ruby signs the bounty leaf
   (`<date> CHECKLOCKTIMEVERIFY DROP HASH256 <hash> EQUALVERIFY <key> CHECKSIG`) by the script path, so a Ruby wallet
