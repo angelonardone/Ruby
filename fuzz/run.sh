@@ -66,8 +66,11 @@ for t in $TARGETS; do
     dirs="$OUT/corpus/$t $BUILD/seeds/$t"
     [ -d "$HERE/corpus/$t" ] && dirs="$dirs $HERE/corpus/$t"
     # -rss_limit_mb / -timeout: the device has ~130 KB of free heap; anything slow or
-    # huge on a PC is already a bug on Ruby.
-    if "$bin" -max_total_time="$SECS" -timeout=10 -rss_limit_mb=2048 \
+    # huge on a PC is already a bug on Ruby. harness/<target>.options: extra libFuzzer
+    # flags of one target (eg. a longer -max_len for sequences of operations).
+    opts=""
+    [ -f "$HERE/harness/$t.options" ] && opts=$(cat "$HERE/harness/$t.options")
+    if "$bin" -max_total_time="$SECS" -timeout=10 -rss_limit_mb=2048 $opts \
             -artifact_prefix="$OUT/crashes/$t/" -print_final_stats=1 $dirs >"$log" 2>&1; then
         runs=$(grep -m1 'stat::number_of_executed_units' "$log" | awk '{print $2}')
         cov=$(grep -E '^#[0-9]+.*cov:' "$log" | tail -n1 | sed -E 's/.*cov: ([0-9]+).*/\1/')

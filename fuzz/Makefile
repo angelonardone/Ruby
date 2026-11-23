@@ -93,7 +93,7 @@ $(BUILD)/firmware_stubs.o: stubs/firmware_stubs.c stubs/firmware_stubs.h | $(BUI
 
 # Harnesses of firmware code: one translation unit with libwally's combined.c, as main/amalgamated.c
 # (harness/fw_amalgam.h), so they are not linked with build/wally.o.
-FW_TARGETS := fuzz_restore_seed fuzz_seed_split fuzz_psbt_taproot fuzz_register_group
+FW_TARGETS := fuzz_restore_seed fuzz_seed_split fuzz_psbt_taproot fuzz_register_group fuzz_musig2_session
 
 $(addprefix $(BUILD)/,$(FW_TARGETS)): $(BUILD)/%: harness/%.c $(FW_OBJS)
 	$(CC) $(CFLAGS) $(SAN) -fsanitize=fuzzer -MMD -MP $(WALLY_DEFS) $(FW_DEFS) $(FW_INC) $(WALLY_INC) -Iharness $< \

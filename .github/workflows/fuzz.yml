@@ -36,3 +36,29 @@ jobs:
         CI: 'true'
         SECONDS_PER_TARGET: ${{ github.event_name == 'schedule' && '1800' || inputs.seconds || '60' }}
       run: sh fuzz/run.sh "$SECONDS_PER_TARGET"
+
+  # The RPC fuzzer on the QEMU emulator (fuzz/rpc/, "shown vs signed" oracle): the real firmware, a few requests per
+  # second, so only every night (and by hand). The CI firmware build logs what its screens show (CI_SHOWN).
+  # Findings are NOT printed or uploaded (public repo): the job prints the counts only and fails on a SAFETY one;
+  # reproduce locally with the printed seed (fuzz/README.md, "RPC fuzzer on the emulator").
+  rpc-fuzzer:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+    - name: Free disk space (the ESP-IDF builder image is large)
+      run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+    - name: Checkout repo
+      uses: actions/checkout@v5
+      with:
+        submodules: 'recursive'
+    - name: Build the CI emulator (--dev --ci --m5basic --log-cbor)
+      run: docker build -t ruby-qemu-ci-fuzz -f Dockerfile.qemu --build-arg QEMU_CONFIG_ARGS="--dev --ci --m5basic --log-cbor" .
+    - name: RPC fuzzer
+      env:
+        SECONDS_TOTAL: ${{ github.event_name == 'schedule' && '7200' || inputs.seconds || '600' }}
+      run: |
+        docker run --name rpc-fuzz ruby-qemu-ci-fuzz sh -c \
+          "cd /jade && /opt/esp/python_env/*/bin/python fuzz/rpc/fuzz_rpc.py --qemu --seconds $SECONDS_TOTAL --out /tmp/rpc > /tmp/rpc.log 2>&1; \
+           r=\$?; grep -E '^connected' /tmp/rpc.log; /opt/esp/python_env/*/bin/python -c \"import json; d = json.load(open('/tmp/rpc/stats.json')); \
+           [print(k, d[k]) for k in ('seed', 'requests', 'signed', 'refused', 'findings', 'design', 'restarts', 'outputs')]\"; exit \$r"

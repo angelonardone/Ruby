@@ -13,4 +13,8 @@ void fuzz_random_set(const uint8_t* data, size_t len);
 // Items on the SENSITIVE_PUSH stack: must be 0 when the fuzzed call returns (else a secret is left unwiped)
 size_t fuzz_sensitive_depth(void);
 
+// xTaskGetTickCount(): set or move the clock (a 32-bit tick count, as on the ESP32)
+void fuzz_ticks_set(uint32_t ticks);
+void fuzz_ticks_advance(uint32_t ticks);
+
 #endif /* FUZZ_FIRMWARE_STUBS_H_ */

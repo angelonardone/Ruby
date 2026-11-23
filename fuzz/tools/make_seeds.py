@@ -14,6 +14,8 @@ Seeds are generated (not committed) so they always follow the repo's test data:
   byte 1) per kind of Taproot input and break.
 - fuzz_restore_seed, fuzz_seed_split, fuzz_register_group: hand-made RAW inputs (whole RPC
   requests in CBOR for the last two) and STRUCTURED inputs covering every kind / break.
+- fuzz_musig2_session: hand-made payments and operation sequences (the input layout is in
+  musig2_session_seeds below and in the harness).
 
 Each seed is written as OUTDIR/<target>/<sha1 of the bytes>, so duplicates collapse.
 """
@@ -174,6 +176,48 @@ def register_group_seeds():
     return seeds
 
 
+def musig2_session_seeds():
+    """Inputs of fuzz_musig2_session: clock byte, payment, then 4-byte operations."""
+    KEYPATH, LEAF, NOT_OURS, PLAIN = 0, 5, 8, 9
+
+    def inp(kind, n=2, pos=0, cos=0, child=0, merkle=0, depth=0):
+        # kind, participants-2, our position, first cosigner, our child, merkle, depth, amount (2), txid, vout, seq
+        return bytes([kind, n - 2, pos, cos, child, merkle, depth, 1, 2, 3, 0, 0])
+
+    def payment(inputs, clock=0):
+        b = bytes([clock, len(inputs) - 1]) + b''.join(inputs)
+        return b + bytes([0, 0, 10, 0, 20, 0, 0])  # one output, amounts, lock time
+
+    def op(code, a=0, b=0, c=0):
+        # 0 NONCES, 1/2 SIGN, 3 SIGN_PSBT, 4 FLOW, 5 SIGN_BYTES, 6 CLEAR, 7 TIME
+        return bytes([code, a, b, c])
+
+    seeds = [
+        payment([inp(KEYPATH)]) + op(4),
+        payment([inp(KEYPATH, merkle=1)]) + op(4),
+        payment([inp(LEAF, n=3, pos=1, depth=2)]) + op(4),
+        payment([inp(KEYPATH, n=5, pos=4, merkle=1), inp(LEAF, depth=3), inp(NOT_OURS), inp(KEYPATH, child=7)])
+        + op(4),
+        payment([inp(KEYPATH), inp(PLAIN)]) + op(4),
+        payment([inp(NOT_OURS)]) + op(0),
+        payment([inp(KEYPATH)]) + op(0) + op(1) + op(1),
+        payment([inp(KEYPATH), inp(LEAF)]) + op(0) + op(6) + op(1) + op(0) + op(0) + op(1, 1),
+        payment([inp(KEYPATH, n=3), inp(LEAF, n=4, pos=3)]) + op(3, 0, 0),
+        payment([inp(KEYPATH), inp(LEAF)]) + op(0, 5) + op(1, 0, 0) + op(1, 1, 1) + op(0) + op(1, 0, 6)
+        + op(1, 1, 0),
+        payment([inp(KEYPATH), inp(KEYPATH, child=1)], clock=3) + op(0) + op(7, 1) + op(1, 0) + op(7, 2)
+        + op(1, 1),
+        payment([inp(KEYPATH), inp(LEAF)]) + op(0) + op(5, 0, 1, 9) + op(5, 1, 2, 4) + op(3),
+    ]
+    for tamper in range(8):
+        seeds.append(payment([inp(KEYPATH, n=3)]) + op(0) + op(1, 0, 0, tamper))
+        seeds.append(payment([inp(LEAF, n=3, depth=1)]) + op(0) + op(1, 0, 0, tamper))
+    for variant in range(8):
+        seeds.append(payment([inp(KEYPATH), inp(LEAF)]) + op(0) + op(1, 0, variant) + op(1, 1, variant))
+        seeds.append(payment([inp(KEYPATH), inp(LEAF)]) + op(0, variant) + op(1, 0) + op(1, 1))
+    return seeds
+
+
 def main(root, outdir):
     sources = [os.path.join(root, 'components/libwally-core/upstream/src/data/psbt.json')]
     sources += sorted(glob.glob(os.path.join(root, 'tests/rpc/data/sign_psbt/*.json')))
@@ -197,6 +241,7 @@ def main(root, outdir):
     corpora['fuzz_restore_seed'] = restore_seed_seeds()
     corpora['fuzz_seed_split'] = seed_split_seeds()
     corpora['fuzz_register_group'] = register_group_seeds()
+    corpora['fuzz_musig2_session'] = musig2_session_seeds()
     for target, seeds in corpora.items():
         d = os.path.join(outdir, target)
         os.makedirs(d, exist_ok=True)

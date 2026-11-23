@@ -21,6 +21,16 @@ static const char VERIFIED_WALLET_OUTPUT_MSG[] = "Verified wallet output";
 
 static const char TICKER_BTC[] = "BTC";
 
+// Ruby: on the unattended CI build (its screens confirm themselves) log what each review screen shows, so the RPC
+// fuzzer (fuzz/rpc/) can compare what Ruby shows with what it signs. Not in any device build.
+#ifdef CONFIG_DEBUG_UNATTENDED_CI
+#define CI_SHOWN(fmt, ...) JADE_LOGI("SHOWN " fmt, ##__VA_ARGS__)
+#else
+#define CI_SHOWN(fmt, ...)                                                                                             \
+    do {                                                                                                               \
+    } while (0)
+#endif
+
 // Don't display pre-validated (eg. change) outputs (if provided) unless they have an associated warning message.
 static bool display_output(
     const struct wally_tx_output* outputs, const output_info_t* output_info, const size_t i, const bool show_scriptless)
@@ -252,12 +262,14 @@ bool show_btc_transaction_outputs_activity(
     // NOTE: because signing potentially has a lot of output info to display
     // we deal with the outputs one at a time, rather than creating them all up-front.
     gui_activity_t* act_clear = gui_make_activity();
+    CI_SHOWN("outputs %u of %u", (unsigned)nTotalOutputsDisplayed, (unsigned)tx->num_outputs);
 
     for (size_t i = 0; i < tx->num_outputs; ++i) {
         struct wally_tx_output* out = tx->outputs + i;
 
         // Skip outputs we have automatically validated (eg. change outputs)
         if (hiddenOutputs && !display_output(tx->outputs, output_info, i, show_scriptless)) {
+            CI_SHOWN("output %u hidden", (unsigned)i);
             continue;
         }
         ++nDisplayedOutput;
@@ -281,6 +293,8 @@ bool show_btc_transaction_outputs_activity(
 
         // Show output info
         const char* msg = (output_info && strlen(output_info[i].message) > 0) ? output_info[i].message : NULL;
+        CI_SHOWN("output %u %s %s%s%s%s", (unsigned)i, address, amount, is_wallet_output ? " verified" : "",
+            msg ? " warning=" : "", msg ? msg : "");
         if (!show_input_output_activity(
                 title, is_wallet_output, is_address, address, amount, TICKER_BTC, msg)) {
             // User pressed 'cancel'
@@ -409,6 +423,7 @@ bool show_btc_final_confirmation_activity(const network_t network_id, const uint
     const int ret = snprintf(feeamount, sizeof(feeamount), "%.08f", 1.0 * fee / 1e8);
     JADE_ASSERT(ret > 0 && ret < sizeof(feeamount));
 
+    CI_SHOWN("fee %s%s%s", feeamount, warning_msg ? " warning=" : "", warning_msg ? warning_msg : "");
     return show_final_confirmation_activity("Send Transaction", feeamount, TICKER_BTC, warning_msg);
 }
 
@@ -436,6 +451,7 @@ bool show_btc_fee_options_confirmation_activity(const network_t network_id, cons
                 lines[i], sizeof(lines[i]), "%.08f %s +%u%%", 1.0 * fees[i] / 1e8, TICKER_BTC, (unsigned)pct);
         }
         JADE_ASSERT(ret > 0 && ret < sizeof(lines[i]));
+        CI_SHOWN("fee option %u %s", (unsigned)i, lines[i]);
         menubtns[i] = (btn_data_t){ .txt = lines[i], .font = GUI_DEFAULT_FONT, .ev_id = GUI_BUTTON_EVENT_NONE };
     }
 

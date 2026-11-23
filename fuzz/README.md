@@ -17,6 +17,9 @@ Why and what, in the project docs: DistributedCryptography `docs/ideas-roadmap.m
 | `run.sh` | yes | builds, generates the seeds, replays the regressions, fuzzes each target for N seconds |
 | `Dockerfile`, `Dockerfile.dockerignore` | yes | the same, in a container (Windows / macOS) |
 | `harness/fuzz_*.c` | yes | Ruby's own targets (one `LLVMFuzzerTestOneInput` each) |
+| `harness/fuzz_*.options` | yes (optional) | extra libFuzzer flags of one target, used by `run.sh` (eg. `-max_len` for operation sequences) |
+| `rpc/fuzz_rpc.py` | yes | the RPC fuzzer on the QEMU emulator, with the "shown vs signed" oracle ("RPC fuzzer on the emulator") |
+| `rpc/check_ripemd_alignment.py` | yes | the check of unaligned RIPEMD-160 input on the emulator (see "Why `AVOID_UNALIGNED_ACCESS`") |
 | `harness/fw_amalgam.h`, `harness/fw_rpc.h` | yes | firmware code on the host: one translation unit as the firmware; an RPC request filtered as `wire.c` does |
 | `stubs/` | yes | host stand-ins for the firmware functions the fuzzed code links against (below) |
 | `tools/make_seeds.py` | yes | generates the seed corpus from test data already in the repo |
@@ -66,10 +69,22 @@ instead of mbedTLS, and `AVOID_UNALIGNED_ACCESS`.
 ccan's SHA-256, SHA-512 and RIPEMD-160 cast unaligned input to `uint32_t *` when they hash 64 bytes or more straight
 from the caller's buffer. On x86-64 that only makes UBSan complain ("load of misaligned address", first 5-minute run,
 `sha256.c:121`, while hashing PSBT data); libwally provides `AVOID_UNALIGNED_ACCESS` for sanitizer builds, so the
-host build uses it. On the device SHA-256/512 are mbedTLS, not this code, but **RIPEMD-160 is ccan's**: whether
-an unaligned 32-bit load faults or misreads on the ESP32's Xtensa core, and whether any caller passes RIPEMD-160 an
-unaligned buffer of 64 bytes or more (HASH160 hashes a 32-byte digest, which never takes that path), is still to be
-checked (next steps).
+host build uses it. On the device SHA-256/512 are mbedTLS, not this code, but **RIPEMD-160 is ccan's**. Checked
+2026-11-23, **safe on the ESP32**:
+
+- *Who can reach it.* HASH160 hashes a 32-byte digest (never that path), but libwally verifies a psbt's
+  `PSBT_IN_RIPEMD160` preimage **while parsing the psbt** (`pull_preimage` → `map_add` →
+  `wally_map_hash_preimage_verify` → `wally_ripemd160`) on a pointer into the bytes the host sent, before any
+  screen. A preimage of 128 bytes or more has its second and later blocks read in place as `uint32_t`, at whatever
+  alignment the host chose. That is the only host-reachable caller (`bip38.c` is not used by Ruby).
+- *What the ESP32 does.* Its Xtensa core is configured with `XCHAL_UNALIGNED_LOAD_HW 1` and
+  `XCHAL_UNALIGNED_LOAD_EXCEPTION 0` (ESP-IDF `components/xtensa/esp32/include/xtensa/config/core-isa.h`): unaligned
+  loads from data RAM work in hardware, no exception and no misread. So `HAVE_UNALIGNED_ACCESS 1` is right for it.
+- *On the emulator* (`rpc/check_ripemd_alignment.py`, image `--dev --ci --m5basic --log-cbor`): a payment whose input
+  carries a `PSBT_IN_RIPEMD160` field with a 63-, 200- and 1000-byte preimage, shifted by 1 to 4 bytes (every
+  alignment): the right preimage is accepted (signed) and a wrong one refused ("Failed to extract psbt") at every
+  alignment; no crash. (An empty proprietary value used for the first shift made libwally refuse the whole psbt: a
+  test artefact, fixed.)
 
 **Which safegcd runs on the device** (checked 2026-11-18, roadmap §12.8): `modinv32`. The xtensa compiler of the
 image (`xtensa-esp32-elf-gcc` 14.2.0) does not define `__SIZEOF_INT128__` and has 32-bit pointers, so
@@ -102,7 +117,9 @@ copies. What makes that work:
   checks (32 items, LIFO, wiped; the harnesses also check the stack is empty after each call), and abort-if-reached
   stand-ins for processes, screens, keychain and storage: a harness that reaches one fails loudly instead of testing
   a fake. A harness that needs a test wallet defines `keychain_get` and the few wallet / storage functions it uses,
-  copied from the firmware (`fuzz_register_group.c`).
+  copied from the firmware (`fuzz_register_group.c`, `fuzz_musig2_session.c`). The FreeRTOS clock
+  (`xTaskGetTickCount`) only moves when a harness moves it (`fuzz_ticks_set` / `fuzz_ticks_advance`) and wraps at 32
+  bits as on the ESP32 (`TickType_t` is 64 bits in `libjade/include`).
 - mbedTLS: the host's (`libmbedtls-dev` 2.28) for AES-GCM in `seed_split`; the device has ESP-IDF's mbedTLS 3.6, the
   same GCM API.
 
@@ -124,6 +141,7 @@ so STRUCTURED is what reaches the code that decides what Ruby signs.
 | `fuzz_seed_split` | `harness/`, `main/process/seed_split.c`, `main/codex32.c` | RAW: whole `seed_split` requests. STRUCTURED: requests with contacts whose private keys the harness knows, valid or not; checks Ruby accepts exactly the valid ones, then decrypts every contact's shares as the contact does (BIE1 key, AES-256-GCM text, JSON array), checks the share counts, and that all of them and any k of them give the seed (backup) or the pad that, XOR `masked`, is the seed (vault) | hand-made CBOR requests |
 | `fuzz_psbt_taproot` | `harness/`, `main/utils/psbt.c`, `main/musig2.c` | RAW: PSBTs through `key_iter_is_supported_taproot()` and `musig2_input_load()` (each participant and each Taproot key as ours). STRUCTURED: one valid input of each kind Ruby signs (key path with scripts, multi_a leaf, TEV bounty leaf, MuSig2 key path, MuSig2 leaf) or the same with one of 14 breaks; Ruby must accept exactly the valid ones; on a MuSig2 key path, libsecp256k1's MuSig2 tweak must agree with libwally's BIP341 tweak | the PSBTs above + one input per kind and break |
 | `fuzz_register_group` | `harness/`, `main/process/register_group.c`, `main/group.c` | RAW: whole `register_group` requests. STRUCTURED: the 4 group types, 2-6 signers, this Ruby as owner or signer, or one of 18 breaks; Ruby must accept exactly the valid ones; an accepted group must give P2TR addresses on both chains (deterministic, path back to chain and index) and a storage record that round-trips and refuses any changed byte | one input per type and break |
+| `fuzz_musig2_session` | `harness/`, `main/musig2.c`, `main/utils/psbt.c` | MuSig2 signing sessions: a payment (1-4 inputs: MuSig2 key path or leaf, another wallet's MuSig2 input, a plain input of ours; 2-5 participants) and up to 16 input-chosen operations: round 1 (`musig2_create_nonces`) on the payment or a variant (other amount, coin amount, lock time, sequence, extra field, one input less, one output more), round 2 (`musig2_sign_input`, as `sign_psbt` calls it) with every cosigner's real nonce or ONE tamper (our nonce swapped or missing, a cosigner's missing / wrong length / not a point / a copy of ours / chosen so the aggregate nonce is infinity), `sign_psbt`'s loop and cleanup, round 2 on a psbt with changed bytes, `musig2_clear`, the clock moved to just inside / outside the nonces' lifetime (also across the 32-bit wrap). A model of what Ruby holds predicts every result. Checked: **no secret nonce ever signs twice**; after round 2 of an input its nonce is all zeroes, after a clear or a failed round 1 there is none; every nonce is new; the message kept is the input's BIP341 sighash; a partial signature verifies (BIP327) and, with honest cosigners, the aggregate is a valid BIP340 signature for the coin; Ruby adds exactly one field; a changed-bytes psbt is signed only for round 1's message and nonce | hand-made sequences (`make_seeds.py`) |
 
 Results of 2026-11-18 (Docker on the Windows dev PC, one core per target, 300 s each, after the fixes below), all PASS:
 
@@ -162,9 +180,94 @@ break was run once by hand (`FUZZ_TRACE=1 fuzz/build/<target> <input>` prints wh
 `fuzz_psbt_taproot` 5 kinds valid + every applicable break (39 cases), `fuzz_register_group` 4 types + 18 breaks,
 `fuzz_seed_split` a 2-of-3 backup (32-byte seed) and a 3-of-6 vault (64-byte seed) decrypted and combined.
 
+Step 3, 2026-11-23 (Ruby 1.0.1 + step 2), `fuzz_musig2_session`, PASS: 43 826 sequences in 600 s, then 48 342 in
+1 200 s with longer inputs (`fuzz_musig2_session.options`: `-max_len=160`; a whole input, 4 inputs + 16 operations,
+is 121 bytes), coverage 1 827 edges, corpus 828. It is slow on purpose (40-70 sequences/s): every operation builds
+the payment again, derives keys and makes real nonces and signatures. Before the fuzzing, by hand (`FUZZ_TRACE=1`):
+a 2-of-2 key path, a 3-of-3 leaf at depth 2, 4 inputs (key path 5 participants with merkle root, leaf depth 3,
+another wallet's input, key path), a plain input of ours (round 1 refused), round 2 twice (second refused), every
+tamper (refused except "copy of ours" and "infinity", which BIP327 allows), variants between rounds, and the
+lifetime: signed at exactly 600 000 ticks after round 1, refused one tick later, with the 32-bit tick count wrapping
+in between. Clean image (`docker build` + `run.sh 120`, fresh corpus), every target PASS; `fuzz_musig2_session`
+10 633 sequences, 1 696 edges (`fuzz_seed_split` was re-run after a clock jump: 471 238 runs, 998 edges).
+
 **Docker Desktop's clock.** On the Windows dev PC the container clock sometimes jumps: libFuzzer then reports
 "Done N runs in -10 second(s)", stops right after loading the seeds (a PASS with a few runs and an empty corpus), and
 saves `slow-unit-*` files for inputs that take milliseconds. Re-run that target; the CI (Linux) is not affected.
+
+## RPC fuzzer on the emulator
+
+The host harnesses above test functions; `rpc/fuzz_rpc.py` tests **the whole firmware** on the QEMU emulator, with
+the question a hardware wallet must answer: *does it sign what it showed?* (not only "does it refuse what it should").
+For Ruby that matters most for what it hides: its own change and the change of a registered group (RUBY-GROUPS.md).
+
+- **What the screens show.** The CI build (`--ci`) confirms its own screens. With `CONFIG_DEBUG_UNATTENDED_CI` it
+  also logs what each review screen shows (`CI_SHOWN` in `main/ui/sign_tx.c`: `SHOWN outputs <n> of <total>`,
+  `SHOWN output <i> <address> <amount>[ verified][ warning=...]` or `SHOWN output <i> hidden`, `SHOWN fee <amount>`,
+  `SHOWN fee option <i> ...`); built with `--log-cbor` the log comes over the RPC connection. No device build has it.
+- **The requests.** Ruby's wallet is a fixed test mnemonic (`debug_set_mnemonic`, dev builds). Three Delegated groups
+  are registered (`register_group`): Ruby the owner (`fz-owner`), Ruby a member (`fz-member`), Ruby the owner of
+  another one (`fz-other`); their addresses are computed in Python from the xpubs as RUBY-GROUPS.md defines them and
+  checked against Ruby's `get_receive_address` at start. Each request is a valid payment (P2WPKH or P2TR coins of
+  the wallet, or coins of a group by the key path or a leaf; a payee; a change output) changed by 0-3 mutations: the
+  change's index or chain moved (key kept consistent), its script replaced (payee, another group's change, the same
+  key in another script type), another group's change with a valid path, a mixed input added (a single-key coin, a
+  coin of another group), amounts (0, dust, overflow, more than the inputs), an extra output (OP_RETURN, empty,
+  non-standard, foreign script with our path), the output's key path broken (fingerprint, a second key, leaf
+  hashes, hardened), input fields (no utxo, wrong merkle root, sighash, leaf, utxo script), transaction fields
+  (lock time, version, sequence, a duplicated input, outputs reordered), and 1 in 10 also gets random bytes
+  flipped. The psbt is written in Python field by field, so any field can be broken.
+- **The oracle**, for every request Ruby signs:
+  - SAFETY: every output is shown or hidden; a shown one has the transaction's address and amount; a hidden one is
+    provably this Ruby's: one of its keys (derived in Python from the mnemonic) at the psbt's path in a standard
+    script of that key, or the address of a registered group at that path; the fee shown is inputs - outputs; Ruby
+    returns the same transaction and coins; every signature it added verifies (BIP143 / BIP341 computed in Python)
+    for that transaction and key; Ruby never stops answering.
+  - DESIGN: a hidden output that is ours but should have been shown (a receiving address; a group's change while
+    the inputs Ruby signs are not all of that group).
+  - NOTE (counted, not a finding): Ruby signed an input whose coin is not a script of the signing key. Jade does the
+    same; the signature commits to that coin's script, so it can spend nothing.
+- **The oracle is tested** (`--selftest N`): N valid payments are signed, then each exchange is altered (a payee
+  hidden, an amount or the fee shown 1 sat lower, no screens, a signature byte changed) and the oracle must flag
+  every altered one and none of the valid ones.
+
+Run (the image takes a while to build the first time):
+
+```sh
+docker build -t ruby-qemu-ci-m5:fuzz -f Dockerfile.qemu --build-arg QEMU_CONFIG_ARGS="--dev --ci --m5basic --log-cbor" .
+docker run -d --name ruby-rpc-fuzz ruby-qemu-ci-m5:fuzz           # the emulator, tcp 30121 inside the container
+docker exec -w /jade ruby-rpc-fuzz sh -c '/opt/esp/python_env/*/bin/python fuzz/rpc/fuzz_rpc.py --selftest 12'
+docker exec -w /jade ruby-rpc-fuzz sh -c '/opt/esp/python_env/*/bin/python fuzz/rpc/fuzz_rpc.py --seconds 3600 --out /tmp/rpc'
+docker exec -w /jade ruby-rpc-fuzz sh -c '/opt/esp/python_env/*/bin/python fuzz/rpc/fuzz_rpc.py --replay /tmp/rpc/findings/1.json'
+```
+
+`--seed N` repeats a run; `--qemu` starts (and after a crash restarts) QEMU itself, as the CI job does. Output:
+`findings/<n>.json` (severity, problems, mutations, the psbt, Ruby's reply and log) and `stats.json` (requests,
+signed, refused by error, findings, outputs shown / hidden by kind). About 2 requests per second.
+
+**CI**: job `rpc-fuzzer` of `.github/workflows/fuzz.yml`, every night (2 h) and by hand: builds the image, runs
+`fuzz_rpc.py --qemu`, prints the counts only (public repo) and fails on a SAFETY finding. Refusals with an internal
+error (`-32603`) are saved in `internal/` to look at (not findings).
+
+Results, 2026-11-23 (Ruby 1.0.1 + `CI_SHOWN`, image `--dev --ci --m5basic --log-cbor`, Docker on the Windows dev
+PC): `--selftest 12`: 58 altered exchanges, all flagged; no valid one flagged. A 40-minute run: 4 257 requests,
+3 692 signed (single key P2WPKH 619, P2TR 594; groups: owner 825, member 802, another owned group 852), 565
+refused; 5 722 outputs shown, 1 994 hidden and every hidden one provably Ruby's (706 own change, 1 288 group
+change), no DESIGN case, no crash or hang; 38 NOTEs. One SAFETY report, the oracle's: an output `76a914<20>88ad`
+(CHECKSIGVERIFY, made by a mutation) is no address and Ruby rightly showed "Unknown Address", but the oracle read it
+as P2PKH; `address_of()` now checks the whole pattern, and the replay is clean. With that fix, a 20-minute run
+(another seed): 2 098 requests, 1 842 signed, 1 022 hidden outputs all Ruby's, no finding; and 25 minutes on a third
+emulator (seed 47): 2 673 requests, 2 345 signed, no finding (one `-32603`, see F3).
+
+**Open, not reproduced: one emulator stopped answering once.** In a third run, on a second emulator container that
+had already served the RIPEMD-160 checks, Ruby stopped answering a group payment (`fz-other`, change moved to
+another chain, two outputs replaced by group change) right after "Found suitable group record": no reply, no log, no
+UART output, QEMU busy at ~80% CPU, no answer to any later request. Not reproduced: the same request on a fresh
+emulator signs in under a second; the same seed from the start (the same sequence of requests), also after the
+same RIPEMD-160 checks, runs 475-493 requests without a hang. So it may be the emulator (QEMU) rather than the
+firmware (the emulator runs with the watchdog timer disabled, `qemu_run.sh`). A request that hangs Ruby is now
+saved with the 30 requests before it (`previous_psbts`, replayed in order by `--replay`), and without `--qemu` the
+run stops there.
 
 ## Findings
 
@@ -201,6 +304,25 @@ asserts that every PSBT Ruby accepts round-trips. Reported to libwally on 2026-1
 `seed_split` refused, correctly, with "Failed to encrypt the shares of a contact" (on the device the TRNG never does
 that). `get_random` is now a PRNG seeded from the input.
 
+**F3: an input whose coin script is malformed is refused only after the screens. Minor, as Jade; not fixed.**
+`fuzz_rpc.py` (`internal/`): a P2WPKH payment where one input's `witness_utxo` script became `0021<20 bytes>` (a
+push of 33 bytes with 20 left, from `flip_bytes`). `sign_psbt` treats it as one more script type ("Your transaction
+inputs are of varying types" on the fee screen), shows the outputs and the fee, and only when signing that input
+answers `-32603` "Failed to generate tx input hash". Nothing is signed and nothing leaves Ruby; a buggy or malicious
+host only wastes a confirmation (as F2 did). 1 to 5 such answers per 2 000-4 000 requests. A fix would compute every
+signed input's signing script / sighash before the screens (in `sign_psbt.c`), not done: it is a firmware change.
+
+**Steps 3 and 4 (2026-11-23): no finding in Ruby's code.** The MuSig2 sessions never reused a secret nonce and
+behaved as the model said in every sequence; the emulator never signed anything it did not show, never hid an
+output that is not its own, and always showed the real fee. What the runs did show, all as Jade does:
+
+- Ruby signs an input whose coin is not a script of the signing key (a P2WPKH coin of another hash with our key
+  path): the signature commits to that coin's script and can spend nothing (NOTE in `fuzz_rpc.py`).
+- MuSig2 round 2 accepts a cosigner nonce that is a copy of Ruby's, or one that makes the aggregate nonce the point
+  at infinity: BIP327 allows both, the partial signature is valid, and Ruby's secret nonce is still used once.
+- A failed round 2 of an input (a nonce missing, ours swapped) uses up Ruby's nonce of that input: the payment
+  must start again from round 1 (the safe choice: a nonce never meets two different sets of cosigner nonces).
+
 ## Crashes in a public repo
 
 This repository is public, and a crash input for the firmware is an exploit hint. So:
@@ -222,18 +344,22 @@ This repository is public, and a crash input for the firmware is an exploit hint
 2. Turn the security property into an `abort()` (e.g. "never signs an input it refused", "the change it hides really
    pays to the group"), not only memory safety.
 3. Seeds: extend `tools/make_seeds.py`, or add files to `corpus/fuzz_<name>/`.
-4. Run it for a while locally before pushing (`sh fuzz/run.sh 600 fuzz_<name>`).
+4. Run it for a while locally before pushing (`sh fuzz/run.sh 600 fuzz_<name>`). Extra libFuzzer flags of that
+   target go in `harness/fuzz_<name>.options` (one line).
 
 ## Next steps (roadmap §12.8 order)
 
-1. ~~libwally's fuzzers + confirm `modinv32`~~ done 2026-11-18 (this folder; F1, F2 fixed in the firmware).
-   Left over: on the QEMU image, check what an unaligned 32-bit load does on the ESP32 and list the callers of
-   `wally_ripemd160` / ccan `ripemd160` with 64+ bytes (see "Why `AVOID_UNALIGNED_ACCESS`").
+1. ~~libwally's fuzzers + confirm `modinv32`~~ done 2026-11-18 (this folder; F1, F2 fixed in the firmware). The
+   left-over check of unaligned RIPEMD-160 input on the ESP32 done 2026-11-23: safe (see "Why
+   `AVOID_UNALIGNED_ACCESS`").
 2. ~~Host harnesses for Ruby's own parsers~~ done 2026-11-23: `musig2.c` (`musig2_input_load` / `_check`), the
    Taproot checks of `utils/psbt.c` (key path with scripts, multi_a and TEV bounty leaves), `register_group` /
-   `group.c`, and the code added in Ruby 1.0.0: `codex32.c`, `seed_split`, `restore_seed`. Not covered yet: the
-   0x1b / 0x1c fields of round 2 (`musig2_sign_input`, it needs the nonces of round 1: step 3) and the group
-   change recognition inside `sign_psbt` (step 4).
-3. Stateful fuzzing of the MuSig2 secret nonces (sequences of `musig2_nonces` / `sign_psbt` / lock / timeout; property:
-   no two partial signatures from the same secret nonce).
-4. Nightly RPC fuzzer against the QEMU emulator with a "shown vs signed" oracle.
+   `group.c`, and the code added in Ruby 1.0.0: `codex32.c`, `seed_split`, `restore_seed`.
+3. ~~Stateful fuzzing of the MuSig2 secret nonces~~ done 2026-11-23: `fuzz_musig2_session` (round 1, round 2 with
+   the 0x1b / 0x1c fields, `sign_psbt`'s loop and cleanup, clear, the clock).
+4. ~~RPC fuzzer against the QEMU emulator with a "shown vs signed" oracle~~ first version 2026-11-23: `rpc/`,
+   nightly job `rpc-fuzzer`. Not covered by it yet, in order of value: MuSig2 payments over the RPCs
+   (`musig2_nonces` then `sign_psbt`; the nonce logic itself is `fuzz_musig2_session`), Multi Signature and MuSig2
+   groups (their internal key is a KeyAgg, not in the Python oracle yet), group fee options (`fee_options`), the TEV
+   bounty leaf, and requests other than `sign_psbt` (`register_group`, `seed_split`, `restore_seed` over the wire:
+   their parsers are fuzzed on the host).

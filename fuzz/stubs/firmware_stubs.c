@@ -128,8 +128,12 @@ bool run_in_temporary_task(const size_t stack_size, temporary_stack_function_t f
 
 // ---- FreeRTOS ticks (musig2.c: lifetime of the kept nonces) ----
 
+// The clock only moves when a harness moves it (fuzz_ticks_set / fuzz_ticks_advance). TickType_t is 64 bits in
+// libjade/include but 32 bits on the ESP32: the count wraps at 32 bits here too.
 static uint32_t fuzz_ticks;
-uint32_t xTaskGetTickCount(void) { return ++fuzz_ticks; }
+unsigned long long xTaskGetTickCount(void) { return fuzz_ticks; }
+void fuzz_ticks_set(const uint32_t ticks) { fuzz_ticks = ticks; }
+void fuzz_ticks_advance(const uint32_t ticks) { fuzz_ticks += ticks; }
 unsigned int uxTaskGetStackHighWaterMark(void* task)
 {
     (void)task;
