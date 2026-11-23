@@ -17,7 +17,8 @@ Why and what, in the project docs: DistributedCryptography `docs/ideas-roadmap.m
 | `run.sh` | yes | builds, generates the seeds, replays the regressions, fuzzes each target for N seconds |
 | `Dockerfile`, `Dockerfile.dockerignore` | yes | the same, in a container (Windows / macOS) |
 | `harness/fuzz_*.c` | yes | Ruby's own targets (one `LLVMFuzzerTestOneInput` each) |
-| `stubs/` | yes (later) | small replacements of ESP-IDF / NVS / storage calls, for harnesses over `main/` code |
+| `harness/fw_amalgam.h`, `harness/fw_rpc.h` | yes | firmware code on the host: one translation unit as the firmware; an RPC request filtered as `wire.c` does |
+| `stubs/` | yes | host stand-ins for the firmware functions the fuzzed code links against (below) |
 | `tools/make_seeds.py` | yes | generates the seed corpus from test data already in the repo |
 | `corpus/<target>/` | yes (optional) | hand-made seeds, e.g. CBOR requests captured from the C# tests (`--log-cbor` image) |
 | `regressions/<target>/` | yes | every input that once failed; replayed before fuzzing, must pass |
@@ -38,7 +39,7 @@ The named volume `ruby-fuzz-out` keeps the grown corpus between runs. To get a c
 `docker run --rm -v ruby-fuzz-out:/ruby/fuzz/out --entrypoint sh ruby-fuzz -c 'cat fuzz/out/crashes/<target>/<file>' > crash.bin`
 (bind mounts from Windows are avoided on purpose, as in the firmware builds).
 
-Linux (clang, make, python3):
+Linux (clang, make, python3, git, libmbedtls-dev; the first build fetches tinycbor 0.6.1 with git):
 
 ```sh
 sh fuzz/run.sh 300                       # all targets
@@ -78,6 +79,39 @@ image (`xtensa-esp32-elf-gcc` 14.2.0) does not define `__SIZEOF_INT128__` and ha
 `modinv64` symbol. So none of the code on the device is the `secp256k1_modinv64_var` proved in Coq by Blockstream
 Research.
 
+## Firmware code on the host
+
+From step 2 on, the harnesses test Ruby's own code: the **real firmware files**, `#include`d by the harness, not
+copies. What makes that work:
+
+- **One translation unit, as the firmware.** The firmware is built as `main/amalgamated.c`: libwally's `combined.c`
+  first, then every firmware file. Some firmware code relies on it (it calls libwally functions only that unit sees,
+  such as `wally_psbt_get_input_best_utxo`). `harness/fw_amalgam.h` does the same, and those harnesses
+  (`FW_TARGETS` in the Makefile) are not linked with `build/wally.o`. libwally gets the same defines as above.
+- **ESP-IDF and FreeRTOS** come from `libjade/include`, Jade's own host shims (`libjade/` builds the firmware as a
+  native library). Built with `CONFIG_LIBJADE_NO_SPIRAM`, so message sizes are those of the reference board
+  (M5Stack Basic, no PSRAM). `pdMS_TO_TICKS`, used by `musig2.c`, is missing there and defined in `fw_amalgam.h`.
+- **tinycbor 0.6.1**: the firmware's `espressif/cbor 0.6.1~4` has exactly these sources (checked file by file against
+  the managed component of the firmware image), built with the firmware's `CBOR_PARSER_MAX_RECURSIONS=20`; the
+  Makefile fetches commit `c0aad2fb` once. `main/utils/cbor_rpc.c` is the firmware's.
+- **A request reaches a handler as on Ruby**: `harness/fw_rpc.h` repeats `wire.c` (`cbor_parser_init`, the whole
+  value advances, it is a map, `rpc_request_valid`) and `GET_MSG_PARAMS` before a harness hands the params to the
+  handler's parser. A harness therefore reports only what a host could make Ruby run.
+- **`stubs/firmware_stubs.c`**: `jade_abort`, `get_random` (pseudo-random from the input: reproducible, never
+  degenerate), `keychain_get_new_privatekey` (the firmware's), `sensitive_push` / `sensitive_pop` with the firmware's
+  checks (32 items, LIFO, wiped; the harnesses also check the stack is empty after each call), and abort-if-reached
+  stand-ins for processes, screens, keychain and storage: a harness that reaches one fails loudly instead of testing
+  a fake. A harness that needs a test wallet defines `keychain_get` and the few wallet / storage functions it uses,
+  copied from the firmware (`fuzz_register_group.c`).
+- mbedTLS: the host's (`libmbedtls-dev` 2.28) for AES-GCM in `seed_split`; the device has ESP-IDF's mbedTLS 3.6, the
+  same GCM API.
+
+Two kinds of input in every firmware harness, picked by the first byte: **RAW** (what a host sends, mutated freely:
+memory safety and invariants of whatever is accepted) and **STRUCTURED** (the harness builds a valid request from the
+input, optionally with one input-chosen *break*, and checks that Ruby accepts it exactly when there is no break, then
+checks the result end to end). Random bytes almost never form a valid MuSig2 aggregate, Taproot commitment or xpub,
+so STRUCTURED is what reaches the code that decides what Ruby signs.
+
 ## Targets
 
 | Target | Source | What it reads | Seeds |
@@ -85,6 +119,11 @@ Research.
 | `fuzz_psbt_from_bytes` | libwally `upstream/fuzz/` (unchanged) | a PSBT, with STRICT, LOOSE and default flags, then serialises it | the PSBTs of libwally's `psbt.json` + those of `tests/rpc/data/sign_psbt/` (294 distinct seeds on libwally 1.6.1) |
 | `fuzz_tx_from_bytes` | libwally `upstream/fuzz/` (unchanged) | a transaction, with every tx flag | the transactions inside those PSBTs |
 | `fuzz_psbt_ruby_flags` | `harness/` | a PSBT **as Ruby accepts it** (`deserialise_psbt()`: STRICT \| COMPLETE parse that also serialises, see F2), then `serialise_psbt()`; checks that what Ruby sends back parses again and serialises to the same bytes | same PSBTs |
+| `fuzz_codex32` | `harness/`, `main/codex32.c` | COMBINE: any set of strings (the shares a user types); SPLIT: seed, k, n, identifier and randomness from the input. Checks: any k shares (any order, also UPPERCASE) and all n give the seed back, k-1 do not, 1 to 4 changed characters in a share are always refused | the BIP-93 strings of `tests/codex32/` |
+| `fuzz_restore_seed` | `harness/`, `main/process/restore_seed.c` (+ `seed_split.c`) | RAW: the encrypted seed of `restore_seed_data`. STRUCTURED: a seed encrypted as the wallet does (BIE1); checks it decrypts to the same seed, and that a changed byte, one byte more or less, or another Ruby key are refused | hand-made |
+| `fuzz_seed_split` | `harness/`, `main/process/seed_split.c`, `main/codex32.c` | RAW: whole `seed_split` requests. STRUCTURED: requests with contacts whose private keys the harness knows, valid or not; checks Ruby accepts exactly the valid ones, then decrypts every contact's shares as the contact does (BIE1 key, AES-256-GCM text, JSON array), checks the share counts, and that all of them and any k of them give the seed (backup) or the pad that, XOR `masked`, is the seed (vault) | hand-made CBOR requests |
+| `fuzz_psbt_taproot` | `harness/`, `main/utils/psbt.c`, `main/musig2.c` | RAW: PSBTs through `key_iter_is_supported_taproot()` and `musig2_input_load()` (each participant and each Taproot key as ours). STRUCTURED: one valid input of each kind Ruby signs (key path with scripts, multi_a leaf, TEV bounty leaf, MuSig2 key path, MuSig2 leaf) or the same with one of 14 breaks; Ruby must accept exactly the valid ones; on a MuSig2 key path, libsecp256k1's MuSig2 tweak must agree with libwally's BIP341 tweak | the PSBTs above + one input per kind and break |
+| `fuzz_register_group` | `harness/`, `main/process/register_group.c`, `main/group.c` | RAW: whole `register_group` requests. STRUCTURED: the 4 group types, 2-6 signers, this Ruby as owner or signer, or one of 18 breaks; Ruby must accept exactly the valid ones; an accepted group must give P2TR addresses on both chains (deterministic, path back to chain and index) and a storage record that round-trips and refuses any changed byte | one input per type and break |
 
 Results of 2026-11-18 (Docker on the Windows dev PC, one core per target, 300 s each, after the fixes below), all PASS:
 
@@ -105,6 +144,27 @@ running on the same PC at the same time), all PASS:
 
 On the way there: F1 at once (initial corpus), F2 within seconds, and UBSan "misaligned load" in ccan's SHA-256
 within 5 minutes (host-only, see "Why `AVOID_UNALIGNED_ACCESS`").
+
+Step 2, 2026-11-23 (Ruby 1.0.1, libwally `release_1.6.1`), all PASS. Long runs during development (Docker on the
+Windows dev PC, three targets at a time) and the clean image (`docker build` + `run.sh 120`, fresh corpus):
+
+| Target | Development run | Clean image, 120 s | Coverage (edges) |
+|---|---|---|---|
+| `fuzz_codex32` | 366 586 runs / 180 s | 254 609 | 241 |
+| `fuzz_restore_seed` | 160 554 / 90 s | 286 023 | 378 |
+| `fuzz_seed_split` | 2 349 665 / 600 s (+ 220 000 / 300 s) | 412 911 | 993 |
+| `fuzz_psbt_taproot` | 3 736 927 / 420 s | 923 956 | 1 664 |
+| `fuzz_register_group` | 87 120 / 420 s | 20 681 | 1 177 |
+
+`fuzz_register_group` is slow on purpose: every accepted group computes real addresses (up to `LEAF_CAP` = 256
+leaves, KeyAgg per leaf for the MuSig2 types) and its storage record. Before the fuzzing, every STRUCTURED kind and
+break was run once by hand (`FUZZ_TRACE=1 fuzz/build/<target> <input>` prints what each STRUCTURED input checked):
+`fuzz_psbt_taproot` 5 kinds valid + every applicable break (39 cases), `fuzz_register_group` 4 types + 18 breaks,
+`fuzz_seed_split` a 2-of-3 backup (32-byte seed) and a 3-of-6 vault (64-byte seed) decrypted and combined.
+
+**Docker Desktop's clock.** On the Windows dev PC the container clock sometimes jumps: libFuzzer then reports
+"Done N runs in -10 second(s)", stops right after loading the seeds (a PASS with a few runs and an empty corpus), and
+saves `slow-unit-*` files for inputs that take milliseconds. Re-run that target; the CI (Linux) is not affected.
 
 ## Findings
 
@@ -132,8 +192,14 @@ left Ruby).
 Fix: `deserialise_psbt()` (`main/process/sign_psbt.c`, used by `sign_psbt`, `musig2_nonces`, QR and USB storage) also
 serialises the PSBT once and refuses it when that fails, so the host gets `-32602 CBOR_RPC_BAD_PARAMETERS` "Failed to
 extract psbt from passed bytes" before any screen (checked on the emulator). The harness now mirrors that check and
-asserts that every PSBT Ruby accepts round-trips. Worth reporting to libwally as well (parser and serialiser
-disagree).
+asserts that every PSBT Ruby accepts round-trips. Reported to libwally on 2026-11-23:
+[ElementsProject/libwally-core#567](https://github.com/ElementsProject/libwally-core/issues/567), with a proposed fix
+(`pull_psbt_input()` refuses a non-witness UTXO with no inputs or outputs).
+
+**Step 2 (2026-11-23): no finding in Ruby's code.** One harness failure on the way was the harness's own: its first
+`get_random` cycled the input bytes, so an input of zeros gave four invalid (all-zero) ephemeral keys in a row and
+`seed_split` refused, correctly, with "Failed to encrypt the shares of a contact" (on the device the TRNG never does
+that). `get_random` is now a PRNG seeded from the input.
 
 ## Crashes in a public repo
 
@@ -150,7 +216,9 @@ This repository is public, and a crash input for the firmware is an exploit hint
 ## Adding a target
 
 1. `harness/fuzz_<name>.c` with `int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)`; the Makefile picks it
-   up and links it with libwally (and later `stubs/`). Prefer pure functions over libwally structs.
+   up and links it with libwally, tinycbor, `cbor_rpc.c` and `stubs/`. For firmware code: include
+   `fw_amalgam.h` first, then the firmware `.c` files, and add the target to `FW_TARGETS` (see "Firmware code on
+   the host"); feed handlers whole requests through `fw_rpc.h`.
 2. Turn the security property into an `abort()` (e.g. "never signs an input it refused", "the change it hides really
    pays to the group"), not only memory safety.
 3. Seeds: extend `tools/make_seeds.py`, or add files to `corpus/fuzz_<name>/`.
@@ -161,10 +229,11 @@ This repository is public, and a crash input for the firmware is an exploit hint
 1. ~~libwally's fuzzers + confirm `modinv32`~~ done 2026-11-18 (this folder; F1, F2 fixed in the firmware).
    Left over: on the QEMU image, check what an unaligned 32-bit load does on the ESP32 and list the callers of
    `wally_ripemd160` / ccan `ripemd160` with 64+ bytes (see "Why `AVOID_UNALIGNED_ACCESS`").
-2. Host harnesses for Ruby's own parsers: `main/musig2.c` (`musig2_input_load` / `musig2_input_check`, the BIP373
-   fields 0x1a / 0x1b / 0x1c that libwally keeps as unknowns), the Taproot checks of `main/utils/psbt.c`
-   (`key_iter_is_taproot_keypath_with_scripts`, `key_iter_is_taproot_scriptpath`), the group parser of
-   `register_group` (`main/group.c`).
+2. ~~Host harnesses for Ruby's own parsers~~ done 2026-11-23: `musig2.c` (`musig2_input_load` / `_check`), the
+   Taproot checks of `utils/psbt.c` (key path with scripts, multi_a and TEV bounty leaves), `register_group` /
+   `group.c`, and the code added in Ruby 1.0.0: `codex32.c`, `seed_split`, `restore_seed`. Not covered yet: the
+   0x1b / 0x1c fields of round 2 (`musig2_sign_input`, it needs the nonces of round 1: step 3) and the group
+   change recognition inside `sign_psbt` (step 4).
 3. Stateful fuzzing of the MuSig2 secret nonces (sequences of `musig2_nonces` / `sign_psbt` / lock / timeout; property:
    no two partial signatures from the same secret nonce).
 4. Nightly RPC fuzzer against the QEMU emulator with a "shown vs signed" oracle.

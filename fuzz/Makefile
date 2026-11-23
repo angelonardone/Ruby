@@ -34,6 +34,20 @@ WALLY_DEFS += -DAVOID_UNALIGNED_ACCESS=1
 WALLY_INC  := -I$(WALLY) -I$(UP) -I$(UP)/src -I$(UP)/include -I$(UP)/src/ccan \
               -I$(SECP) -I$(SECP)/src -I$(SECP)/include
 
+# Firmware code on the host (fuzz/README.md): ESP-IDF / FreeRTOS from Jade's libjade/include shims, tinycbor
+# 0.6.1 (the exact sources of the firmware's espressif/cbor 0.6.1~4, same CBOR_PARSER_MAX_RECURSIONS), the
+# firmware's utils/cbor_rpc.c, and stubs/firmware_stubs.c for what the fuzzed code must not reach.
+# CONFIG_LIBJADE_NO_SPIRAM: message sizes of the reference board (M5Stack Basic, no PSRAM).
+TINYCBOR        ?= $(BUILD)/tinycbor
+TINYCBOR_COMMIT := c0aad2fb2137a31b9845fbaae3653540c410f215
+TINYCBOR_SRCS   := cborencoder cborencoder_close_container_checked cborencoder_float cborerrorstrings \
+                   cborparser cborparser_dup_string cborparser_float cborvalidation
+FW_DEFS := -DCONFIG_LOG_DEFAULT_LEVEL_NONE -DLIBJADE_BUILD -DCONFIG_LIBJADE_NO_SPIRAM \
+           -DCBOR_PARSER_MAX_RECURSIONS=20
+FW_INC  := -I$(ROOT)/libjade/include -I$(ROOT)/main -I$(TINYCBOR)/src -Istubs
+FW_OBJS := $(BUILD)/cbor_rpc.o $(BUILD)/firmware_stubs.o $(BUILD)/tinycbor.a
+FW_LIBS := -lmbedcrypto
+
 # Targets taken unchanged from libwally (components/libwally-core/upstream/fuzz/).
 LIBWALLY_TARGETS := fuzz_psbt_from_bytes fuzz_tx_from_bytes
 # Ruby's own harnesses (fuzz/harness/<name>.c), added in later steps.
@@ -58,8 +72,40 @@ $(BUILD)/wally.o: $(UP)/src/amalgamation/combined.c | $(BUILD)
 $(BUILD)/fuzz_%: $(UP)/fuzz/fuzz_%.c $(BUILD)/wally.o
 	$(CC) $(CFLAGS) $(SAN) -fsanitize=fuzzer -include stdlib.h -I$(UP)/include $< $(BUILD)/wally.o -o $@
 
-$(BUILD)/%: harness/%.c $(BUILD)/wally.o
-	$(CC) $(CFLAGS) $(SAN) -fsanitize=fuzzer $(WALLY_DEFS) $(WALLY_INC) -Iharness -Istubs $< $(BUILD)/wally.o -o $@
+# tinycbor at the commit of tag v0.6.1, fetched once (git) unless TINYCBOR points to a copy.
+$(TINYCBOR)/src/cbor.h:
+	rm -rf $(TINYCBOR)
+	git clone -q https://github.com/intel/tinycbor.git $(TINYCBOR)
+	git -C $(TINYCBOR) checkout -q $(TINYCBOR_COMMIT)
+
+$(BUILD)/tinycbor.a: $(TINYCBOR)/src/cbor.h | $(BUILD)
+	mkdir -p $(BUILD)/tinycbor-obj
+	for f in $(TINYCBOR_SRCS); do \
+	  $(CC) $(CFLAGS) $(SAN) -fsanitize=fuzzer-no-link -w -DCBOR_PARSER_MAX_RECURSIONS=20 -I$(TINYCBOR)/src \
+	    -c $(TINYCBOR)/src/$$f.c -o $(BUILD)/tinycbor-obj/$$f.o || exit 1; done
+	ar rcs $@ $(BUILD)/tinycbor-obj/*.o
+
+$(BUILD)/cbor_rpc.o: $(ROOT)/main/utils/cbor_rpc.c $(TINYCBOR)/src/cbor.h | $(BUILD)
+	$(CC) $(CFLAGS) $(SAN) -fsanitize=fuzzer-no-link $(FW_DEFS) $(FW_INC) $(WALLY_INC) -c $< -o $@
+
+$(BUILD)/firmware_stubs.o: stubs/firmware_stubs.c stubs/firmware_stubs.h | $(BUILD)
+	$(CC) $(CFLAGS) $(SAN) $(WALLY_INC) -c $< -o $@
+
+# Harnesses of firmware code: one translation unit with libwally's combined.c, as main/amalgamated.c
+# (harness/fw_amalgam.h), so they are not linked with build/wally.o.
+FW_TARGETS := fuzz_restore_seed fuzz_seed_split fuzz_psbt_taproot fuzz_register_group
+
+$(addprefix $(BUILD)/,$(FW_TARGETS)): $(BUILD)/%: harness/%.c $(FW_OBJS)
+	$(CC) $(CFLAGS) $(SAN) -fsanitize=fuzzer -MMD -MP $(WALLY_DEFS) $(FW_DEFS) $(FW_INC) $(WALLY_INC) -Iharness $< \
+	  $(FW_OBJS) $(FW_LIBS) -o $@
+
+# Other harnesses: linked with build/wally.o
+$(BUILD)/%: harness/%.c $(BUILD)/wally.o $(FW_OBJS)
+	$(CC) $(CFLAGS) $(SAN) -fsanitize=fuzzer -MMD -MP $(WALLY_DEFS) $(FW_DEFS) $(FW_INC) $(WALLY_INC) -Iharness $< \
+	  $(BUILD)/wally.o $(FW_OBJS) $(FW_LIBS) -o $@
+
+# Rebuild a harness when a firmware file or header it includes changes
+-include $(wildcard $(BUILD)/*.d)
 
 clean:
 	rm -rf $(BUILD)

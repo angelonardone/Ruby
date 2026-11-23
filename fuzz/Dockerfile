@@ -9,12 +9,15 @@
 FROM ubuntu:24.04
 
 RUN apt-get update \
- && DEBIAN_FRONTEND=noninteractive apt-get install -y clang make python3 \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y clang make python3 git libmbedtls-dev \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /ruby
 COPY components/libwally-core components/libwally-core
 COPY tests/rpc/data/sign_psbt tests/rpc/data/sign_psbt
+COPY tests/codex32 tests/codex32
+COPY libjade/include libjade/include
+COPY main main
 COPY fuzz fuzz
 RUN make -s -C fuzz -j"$(nproc)" all
 

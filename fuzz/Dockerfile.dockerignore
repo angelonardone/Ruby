@@ -1,6 +1,9 @@
 *
 !components/libwally-core
 !tests/rpc/data/sign_psbt
+!tests/codex32
+!libjade/include
+!main
 !fuzz
 fuzz/build
 fuzz/out
