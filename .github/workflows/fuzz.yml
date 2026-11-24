@@ -1,5 +1,5 @@
 name: Fuzz
-# Host fuzzers of fuzz/ (see fuzz/README.md): 60 s per target on every push, 30 min per
+# Host fuzzers of fuzz/ (see fuzz/README.md): 60 s per target on every push, 20 min per
 # target every night. The corpus is kept between runs in the Actions cache (not public).
 # Crash inputs and sanitizer reports are NOT uploaded or printed (public repo): a failing
 # run names the target and the libFuzzer seed only; reproduce locally.
@@ -17,7 +17,7 @@ on:
 jobs:
   host-fuzzers:
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 240
     steps:
     - name: Checkout repo
       uses: actions/checkout@v5
@@ -34,7 +34,7 @@ jobs:
     - name: Fuzz
       env:
         CI: 'true'
-        SECONDS_PER_TARGET: ${{ github.event_name == 'schedule' && '1800' || inputs.seconds || '60' }}
+        SECONDS_PER_TARGET: ${{ github.event_name == 'schedule' && '1200' || inputs.seconds || '60' }}
       run: sh fuzz/run.sh "$SECONDS_PER_TARGET"
 
   # The RPC fuzzer on the QEMU emulator (fuzz/rpc/, "shown vs signed" oracle): the real firmware, a few requests per

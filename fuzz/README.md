@@ -54,8 +54,8 @@ fuzz/build/<target> path/to/input        # replay one input, full sanitizer repo
 `run.sh` prints one line per target: `PASS <target>: <runs> runs in <s>s, coverage <edges> edges, corpus <n> inputs`
 or `FAIL <target>: <sanitizer and kind> (Seed: N); input saved in out/crashes/<target>/`.
 
-**CI**: `.github/workflows/fuzz.yml` runs every target 60 s on every push / pull request and 30 min each night
-(manual runs choose the time). The grown corpus is kept in the Actions cache.
+**CI**: `.github/workflows/fuzz.yml` runs every target 60 s on every push / pull request and 20 min each night
+(9 targets: 3 h, in a job limit of 4 h; manual runs choose the time). The grown corpus is kept in the Actions cache.
 
 ## libwally as on the device
 
