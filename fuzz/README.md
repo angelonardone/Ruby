@@ -20,6 +20,7 @@ Why and what, in the project docs: DistributedCryptography `docs/ideas-roadmap.m
 | `harness/fuzz_*.options` | yes (optional) | extra libFuzzer flags of one target, used by `run.sh` (eg. `-max_len` for operation sequences) |
 | `rpc/fuzz_rpc.py` | yes | the RPC fuzzer on the QEMU emulator, with the "shown vs signed" oracle ("RPC fuzzer on the emulator") |
 | `rpc/check_ripemd_alignment.py` | yes | the check of unaligned RIPEMD-160 input on the emulator (see "Why `AVOID_UNALIGNED_ACCESS`") |
+| `rpc/check_refused_before_screens.py` | yes | the regression check of F3 on the emulator: malformed coin scripts refused before any screen |
 | `harness/fw_amalgam.h`, `harness/fw_rpc.h` | yes | firmware code on the host: one translation unit as the firmware; an RPC request filtered as `wire.c` does |
 | `stubs/` | yes | host stand-ins for the firmware functions the fuzzed code links against (below) |
 | `tools/make_seeds.py` | yes | generates the seed corpus from test data already in the repo |
@@ -224,7 +225,8 @@ For Ruby that matters most for what it hides: its own change and the change of a
     returns the same transaction and coins; every signature it added verifies (BIP143 / BIP341 computed in Python)
     for that transaction and key; Ruby never stops answering.
   - DESIGN: a hidden output that is ours but should have been shown (a receiving address; a group's change while
-    the inputs Ruby signs are not all of that group).
+    the inputs Ruby signs are not all of that group); and, for a request Ruby refuses, a refusal after the review
+    screens (the CI build confirms every screen, so the user would have confirmed for nothing, as F2 and F3 did).
   - NOTE (counted, not a finding): Ruby signed an input whose coin is not a script of the signing key. Jade does the
     same; the signature commits to that coin's script, so it can spend nothing.
 - **The oracle is tested** (`--selftest N`): N valid payments are signed, then each exchange is altered (a payee
@@ -257,7 +259,7 @@ change), no DESIGN case, no crash or hang; 38 NOTEs. One SAFETY report, the orac
 (CHECKSIGVERIFY, made by a mutation) is no address and Ruby rightly showed "Unknown Address", but the oracle read it
 as P2PKH; `address_of()` now checks the whole pattern, and the replay is clean. With that fix, a 20-minute run
 (another seed): 2 098 requests, 1 842 signed, 1 022 hidden outputs all Ruby's, no finding; and 25 minutes on a third
-emulator (seed 47): 2 673 requests, 2 345 signed, no finding (one `-32603`, see F3).
+emulator (seed 47): 2 673 requests, 2 345 signed, no finding (one `-32603`, see F3, now fixed).
 
 **Open, not reproduced: one emulator stopped answering once.** In a third run, on a second emulator container that
 had already served the RIPEMD-160 checks, Ruby stopped answering a group payment (`fz-other`, change moved to
@@ -304,13 +306,21 @@ asserts that every PSBT Ruby accepts round-trips. Reported to libwally on 2026-1
 `seed_split` refused, correctly, with "Failed to encrypt the shares of a contact" (on the device the TRNG never does
 that). `get_random` is now a PRNG seeded from the input.
 
-**F3: an input whose coin script is malformed is refused only after the screens. Minor, as Jade; not fixed.**
+**F3: an input whose coin script is malformed was refused only after the screens. Minor, as Jade; fixed in the
+firmware (2026-11-24).**
 `fuzz_rpc.py` (`internal/`): a P2WPKH payment where one input's `witness_utxo` script became `0021<20 bytes>` (a
 push of 33 bytes with 20 left, from `flip_bytes`). `sign_psbt` treats it as one more script type ("Your transaction
 inputs are of varying types" on the fee screen), shows the outputs and the fee, and only when signing that input
 answers `-32603` "Failed to generate tx input hash". Nothing is signed and nothing leaves Ruby; a buggy or malicious
-host only wastes a confirmation (as F2 did). 1 to 5 such answers per 2 000-4 000 requests. A fix would compute every
-signed input's signing script / sighash before the screens (in `sign_psbt.c`), not done: it is a firmware change.
+host only wastes a confirmation (as F2 did). 1 to 5 such answers per 2 000-4 000 requests.
+Fix (2026-11-24): `sign_psbt()` (`main/process/sign_psbt.c`) computes the signature hash of every input it signs
+with a single signature (not MuSig2, not script path) before the screens and keeps it for the signing, so such an
+input is refused with `-32602` "Failed to generate tx input hash" and no screen. `rpc/check_refused_before_screens.py`
+sends 5 kinds of bad coin script on either input: before the fix all 10 payments were refused after the screens,
+after it all 10 before any screen. `fuzz_rpc.py` now reports any refusal after the screens as DESIGN; 20 minutes
+with the fix (seed 61): 1 962 requests, 1 720 signed, no finding, no `-32603`. Also checked with the fix: TestRuby
+general 154, groups 99, musig2 82, bounty 12, all PASS; Jade's suite 177 pass with the same 8 + 6 PIN / pinserver
+failures as before (23 `test_sign_psbt` tests pass).
 
 **Steps 3 and 4 (2026-11-23): no finding in Ruby's code.** The MuSig2 sessions never reused a secret nonce and
 behaved as the model said in every sequence; the emulator never signed anything it did not show, never hid an

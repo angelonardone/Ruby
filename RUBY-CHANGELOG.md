@@ -8,6 +8,17 @@ The firmware version shown on the device and returned as `JADE_VERSION` by `get_
 Jade's tags (`1.0.41`, …) are ignored, so merging upstream Jade does not change Ruby's version. The protocol keeps
 Jade's names (`JADE_VERSION`, `JADE_STATE`, …) on purpose: clients depend on them.
 
+## Unreleased
+
+- **A payment Ruby can not sign is refused before the review screens**: the signature hash of every input Ruby
+  signs with a single signature is computed before the outputs and the fee are shown, so an input whose coin script
+  is malformed is refused (`-32602` "Failed to generate tx input hash") without asking the user to confirm a payment
+  that then fails (finding F3 of the fuzzing, [fuzz/README.md](./fuzz/README.md); Jade does the same as Ruby did).
+- **Fuzzing** ([fuzz/README.md](./fuzz/README.md)): host targets over Ruby's own code (seed split / restore,
+  codex32, Taproot and MuSig2 checks, groups, MuSig2 signing sessions) and an RPC fuzzer on the QEMU emulator that
+  checks what Ruby shows against what it signs. The CI build (`CONFIG_DEBUG_UNATTENDED_CI` only) logs each review
+  screen for that check.
+
 ## [ruby-1.0.1] - 2026-11-21
 
 ruby-1.0.0 plus:

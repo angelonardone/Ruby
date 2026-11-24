@@ -1036,6 +1036,16 @@ def main():
                         'shown': any('SHOWN fee' in ln for ln in lines)}
                 json.dump(case, open(os.path.join(args.out, 'internal', '%d.json' % stats['requests']), 'w'),
                           indent=1)
+            if any('SHOWN fee' in ln for ln in lines):
+                # refused after the user confirmed (the CI build confirms every screen): a wasted confirmation, as
+                # F2 and F3 were (fuzz/README.md); Ruby must refuse a request before showing it
+                findings += 1
+                stats['design'] += 1
+                case = {'severity': 'DESIGN', 'problems': [['DESIGN', 'refused after the screens: ' + err]],
+                        'kind': p.kind, 'mutations': p.mutations, 'psbt': req.hex(), 'log': lines}
+                json.dump(case, open(os.path.join(args.out, 'findings', '%d.json' % findings), 'w'), indent=1)
+                print('FINDING %d (DESIGN): refused after the screens: %s [%s %s]' % (findings, err, p.kind,
+                                                                                      p.mutations), flush=True)
             continue
         stats['signed'] += 1
         k[1] += 1

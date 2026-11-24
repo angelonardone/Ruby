@@ -1015,6 +1015,30 @@ network_t network_from_psbt_type(struct wally_psbt* psbt)
 // Sign a psbt - the passed wally psbt struct is updated with any signatures.
 // Returns 0 if no errors occurred - does not necessarily indicate that signatures were added.
 // Returns an rpc/message error code on error, and the error string should be populated.
+// Ruby: the signature hash of a single-signature input: the scriptpubkey or redeemscript, then the actual signing
+// script, then the hash.  Fails for an input whose coin script can not be signed (eg. malformed).
+static bool get_input_txhash(
+    struct wally_psbt* psbt, const size_t index, const struct wally_tx* tx, uint8_t* txhash, const size_t txhash_len)
+{
+    JADE_ASSERT(psbt);
+    JADE_ASSERT(tx);
+    JADE_ASSERT(txhash);
+    JADE_ASSERT(txhash_len == WALLY_TXHASH_LEN);
+
+    uint8_t script[WALLY_SCRIPTSIG_MAX_LEN]; // Sufficient
+    uint8_t scriptcode[WALLY_SCRIPTSIG_MAX_LEN]; // Sufficient
+    size_t script_len = 0;
+    size_t scriptcode_len = 0;
+    return wally_psbt_get_input_signing_script(psbt, index, script, sizeof(script), &script_len) == WALLY_OK
+        && script_len <= sizeof(script)
+        && wally_psbt_get_input_scriptcode(
+               psbt, index, script, script_len, scriptcode, sizeof(scriptcode), &scriptcode_len)
+        == WALLY_OK
+        && scriptcode_len <= sizeof(scriptcode)
+        && wally_psbt_get_input_signature_hash(psbt, index, tx, scriptcode, scriptcode_len, 0, txhash, txhash_len)
+        == WALLY_OK;
+}
+
 int sign_psbt(jade_process_t* process, CborValue* params, const network_t network_id, struct wally_psbt* psbt,
     const char** errmsg)
 {
@@ -1064,6 +1088,8 @@ int sign_psbt(jade_process_t* process, CborValue* params, const network_t networ
     bool group_change_abandoned = false;
     // Ruby: MuSig2 inputs (round 2): whatever happens, Ruby's secret nonces are wiped at the end
     bool has_musig2_inputs = false;
+    // Ruby: the signature hash of each single-signature input, computed before the screens
+    uint8_t* txhashes = NULL;
     for (size_t index = 0; index < psbt->num_inputs; ++index) {
         struct wally_psbt_input* input = &psbt->inputs[index];
 
@@ -1261,6 +1287,24 @@ int sign_psbt(jade_process_t* process, CborValue* params, const network_t networ
         goto cleanup;
     }
 
+    // Ruby: the signature hash of every input signed with a single signature (not MuSig2, not script path) is
+    // computed now, before any screen: an input whose hash can not be made (eg. a malformed coin script) is refused
+    // here, so the user is never asked to confirm a payment that then fails
+    JADE_WALLY_VERIFY(wally_psbt_signing_cache_enable(psbt, 0));
+    txhashes = JADE_CALLOC(psbt->num_inputs, WALLY_TXHASH_LEN);
+    for (size_t index = 0; index < psbt->num_inputs; ++index) {
+        if (!sig_types[index] || musig2_input_present(&psbt->inputs[index])
+            || psbt->inputs[index].taproot_leaf_scripts.num_items) {
+            continue;
+        }
+        if (!get_input_txhash(psbt, index, tx, txhashes + index * WALLY_TXHASH_LEN, WALLY_TXHASH_LEN)) {
+            JADE_LOGE("Failed to generate tx input hash for input %u", index);
+            *errmsg = "Failed to generate tx input hash";
+            retval = CBOR_RPC_BAD_PARAMETERS;
+            goto cleanup;
+        }
+    }
+
     {
         // Ruby: fee options of a group payment (see fee_options_approval)
         uint8_t txid[WALLY_TXHASH_LEN];
@@ -1329,9 +1373,7 @@ int sign_psbt(jade_process_t* process, CborValue* params, const network_t networ
 
     display_processing_message_activity();
 
-    // Sign our inputs
-    JADE_WALLY_VERIFY(wally_psbt_signing_cache_enable(psbt, 0));
-
+    // Sign our inputs (the signing cache was enabled before the screens)
     for (size_t index = 0; index < psbt->num_inputs; ++index) {
         // See if we flagged this input for signing
         if (!sig_types[index]) {
@@ -1368,33 +1410,15 @@ int sign_psbt(jade_process_t* process, CborValue* params, const network_t networ
             continue;
         }
 
-        // Get the scriptpubkey or redeemscript, then the actual signing script, then the txhash
-        uint8_t script[WALLY_SCRIPTSIG_MAX_LEN]; // Sufficient
-        uint8_t scriptcode[WALLY_SCRIPTSIG_MAX_LEN]; // Sufficient
-        uint8_t txhash[WALLY_TXHASH_LEN];
-        size_t script_len = 0;
-        size_t scriptcode_len = 0;
-        if (wally_psbt_get_input_signing_script(psbt, index, script, sizeof(script), &script_len) != WALLY_OK
-            || script_len > sizeof(script)
-            || wally_psbt_get_input_scriptcode(
-                   psbt, index, script, script_len, scriptcode, sizeof(scriptcode), &scriptcode_len)
-                != WALLY_OK
-            || scriptcode_len > sizeof(scriptcode)
-            || wally_psbt_get_input_signature_hash(
-                   psbt, index, tx, scriptcode, scriptcode_len, 0, txhash, sizeof(txhash))
-                != WALLY_OK) {
-            JADE_LOGE("Failed to generate tx input hash");
-            *errmsg = "Failed to generate tx input hash";
-            retval = CBOR_RPC_INTERNAL_ERROR;
-            goto cleanup;
-        }
+        // The txhash was computed before the screens
+        const uint8_t* const txhash = txhashes + index * WALLY_TXHASH_LEN;
 
         key_iter_input_begin(psbt, index, &iter);
         while (iter.is_valid) {
             // Sign the input with this key
             const uint32_t sign_flags = EC_FLAG_GRIND_R;
             if (wally_psbt_sign_input_bip32(
-                    psbt, index, iter.key_index, txhash, sizeof(txhash), &iter.hdkey, sign_flags)
+                    psbt, index, iter.key_index, txhash, WALLY_TXHASH_LEN, &iter.hdkey, sign_flags)
                 != WALLY_OK) {
                 *errmsg = "Failed to generate signature";
                 retval = CBOR_RPC_INTERNAL_ERROR;
@@ -1414,6 +1438,7 @@ cleanup:
     if (has_musig2_inputs) {
         musig2_clear();
     }
+    free(txhashes);
     free(group);
     free(descriptor);
     free(multisig_data);
